@@ -99,7 +99,13 @@ jobs:
             echo "::warning::VPS_SSH_KEY secret lacks PEM header/footer (base64 body only) - auto-wrapped. Re-paste the FULL key file to fix properly."
           fi
           chmod 600 "$KEYFILE"
-          ssh-keygen -lf "$KEYFILE" || echo "::error::Reconstructed key UNPARSEABLE - secret body is corrupt/incomplete"
+          FP=$(ssh-keygen -lf "$KEYFILE" 2>/dev/null | awk '{print $2}')
+          echo "RECONSTRUCTED_KEY_FINGERPRINT: $FP"
+          if [ "$FP" != "SHA256:HL9afWG/ItzZHMdHOJXAHXYGU/gMmEhnf/YaXbz8sJg" ]; then
+            echo "::error::Fingerprint MISMATCH - secret is a different/incomplete key than the one authorized on the VPS"
+          else
+            echo "::notice::Fingerprint matches the local key authorized on VPS"
+          fi
 
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1
