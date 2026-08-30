@@ -10,6 +10,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
+  # GHCR mensyaratkan lowercase; github.repository punya huruf besar (MuhWldns/...)
   IMAGE_NAME: ${{ github.repository }}/proxy
 
 jobs:
@@ -21,6 +22,11 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
+      - name: Lowercase image name (GHCR requirement)
+        id: image
+        env:
+          REPO: ${{ github.repository }}
+        run: echo "name=${REPO,,}/proxy" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
 
@@ -33,14 +39,15 @@ jobs:
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}
           tags: |
             type=sha
             type=raw,value=latest
 
       - uses: docker/build-push-action@v6
         with:
-          context: packages/proxy
+          context: .
+          file: packages/proxy/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

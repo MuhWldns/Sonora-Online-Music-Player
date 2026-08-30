@@ -1,6 +1,10 @@
 services:
   sonora-proxy:
-    build: .
+    image: ghcr.io/muhwldns/sonora-online-music-player/proxy:latest
+    # Fallback build lokal: context repo root (lockfile & workspace ada di root)
+    build:
+      context: ..
+      dockerfile: Dockerfile
     ports:
       - "3000:3000"
     environment:
