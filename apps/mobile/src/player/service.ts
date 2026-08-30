@@ -86,6 +86,12 @@ function onStatus(s: AudioStatus): void {
     duration: s.duration > 0 ? s.duration : (track?.durationSec ?? 0),
     error: s.error,
   });
+  // Source finished loading after replace(): this is the reliable moment to
+  // start playback — calling play() synchronously after replace() races the
+  // loader and can be dropped on Android.
+  if (s.isLoaded && !s.playing && s.currentTime === 0 && !s.didJustFinish && wantPlay) {
+    player?.play();
+  }
   if (s.didJustFinish && !advancing) {
     advancing = true;
     advance();
@@ -94,13 +100,16 @@ function onStatus(s: AudioStatus): void {
   }
 }
 
+let wantPlay = false; // set by startTrack; consumed by onStatus when loaded
+
 function startTrack(i: number): void {
   const track = state.queue[i];
   if (!track || !player) return;
+  wantPlay = true;
   emit({
     index: i,
     currentTime: 0,
-    duration: baseTrackDuration(track),
+    duration: track.durationSec ?? 0,
     error: null,
     buffering: true,
   });
@@ -109,12 +118,23 @@ function startTrack(i: number): void {
     artist: track.artist,
     artworkUrl: track.thumbnail ?? undefined,
   });
-  // Async: proxy base resolves from storage; play begins after replace.
+  // Async: proxy base resolves from storage; replace() starts loading, and
+  // onStatus starts playback once the source is actually loaded.
   streamUrl(track.videoId).then((uri) => {
     if (state.queue[state.index] !== track) return; // user skipped ahead
     player?.replace({ uri, name: track.title });
-    player?.play();
   });
+}
+
+export function togglePlay(): void {
+  if (!player) return;
+  if (state.playing) {
+    wantPlay = false;
+    player.pause();
+  } else {
+    wantPlay = true;
+    player.play();
+  }
 }
 
 function baseTrackDuration(track: PlayerTrack): number {
@@ -184,11 +204,6 @@ export function playAt(index: number): void {
   if (index >= 0 && index < state.queue.length) startTrack(index);
 }
 
-export function togglePlay(): void {
-  if (!player) return;
-  if (state.playing) player.pause();
-  else player.play();
-}
 
 export function nextTrack(): void {
   if (state.index + 1 < state.queue.length) startTrack(state.index + 1);
