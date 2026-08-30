@@ -62,30 +62,6 @@ jobs:
     # dan compose file /sonora/docker-compose.yml di VPS yang pakai image GHCR.
     if: ${{ vars.VPS_HOST != '' }}
     steps:
-      - name: Diagnose secrets presence (annotations only, values never printed)
-        env:
-          H: ${{ secrets.VPS_HOST }}
-          U: ${{ secrets.VPS_USER }}
-          K: ${{ secrets.VPS_SSH_KEY }}
-        run: |
-          missing=""
-          [ -z "$H" ] && missing="$missing VPS_HOST"
-          [ -z "$U" ] && missing="$missing VPS_USER"
-          [ -z "$K" ] && missing="$missing VPS_SSH_KEY"
-          if [ -n "$missing" ]; then
-            echo "::error::MISSING SECRETS:$missing - add them in Settings > Secrets and variables > Actions > Secrets tab"
-          else
-            echo "::error::All secrets set. Key first line: $(echo "$K" | head -c 34), last line: $(echo "$K" | tail -1 | head -c 25)"
-          fi
-
-      - name: Diagnose connectivity (result visible via public annotations API)
-        run: |
-          if timeout 15 bash -c 'cat < /dev/null > /dev/tcp/45.198.149.134/2104' 2>/dev/null; then
-            echo "::error::TCP-OK: GitHub runner CAN reach 45.198.149.134:2104 - failure is key/auth"
-          else
-            echo "::error::TCP-BLOCKED: GitHub runner CANNOT reach 45.198.149.134:2104"
-          fi
-
       - name: Write SSH key to temp file (auto-wrap base64 body if PEM header missing)
         env:
           RAW_KEY: ${{ secrets.VPS_SSH_KEY }}
@@ -99,13 +75,6 @@ jobs:
             echo "::warning::VPS_SSH_KEY secret lacks PEM header/footer (base64 body only) - auto-wrapped. Re-paste the FULL key file to fix properly."
           fi
           chmod 600 "$KEYFILE"
-          FP=$(ssh-keygen -lf "$KEYFILE" 2>/dev/null | awk '{print $2}')
-          echo "RECONSTRUCTED_KEY_FINGERPRINT: $FP"
-          if [ "$FP" != "SHA256:uW8LqrCXpZSbbDZeDlxBuxFm3L+Vy2+9uIiOWhZi8VY" ]; then
-            echo "::error::Fingerprint MISMATCH - secret is a different/incomplete key than the one authorized on the VPS"
-          else
-            echo "::notice::Fingerprint matches the local key authorized on VPS"
-          fi
 
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1
