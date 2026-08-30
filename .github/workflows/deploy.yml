@@ -102,6 +102,7 @@ jobs:
           FP=$(ssh-keygen -lf "$KEYFILE" 2>/dev/null | awk '{print $2}')
           echo "RECONSTRUCTED_KEY_FINGERPRINT: $FP"
           if [ "$FP" != "SHA256:uW8LqrCXpZSbbDZeDlxBuxFm3L+Vy2+9uIiOWhZi8VY" ]; then
+            echo "::error::Fingerprint MISMATCH - secret is a different/incomplete key than the one authorized on the VPS"
           else
             echo "::notice::Fingerprint matches the local key authorized on VPS"
           fi
