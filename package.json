@@ -1,0 +1,19 @@
+{
+  "name": "sonora-music",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sonora Music — personal YouTube Music client. RN app + portable InnerTube proxy (Node/Docker & Cloudflare Workers).",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "proxy:dev": "npm run dev -w @sonora-music/proxy",
+    "proxy:typecheck": "npm run typecheck -w @sonora-music/proxy",
+    "proxy:deploy:cf": "npm run deploy:cf -w @sonora-music/proxy"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
