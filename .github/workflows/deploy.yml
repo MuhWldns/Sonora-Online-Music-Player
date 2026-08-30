@@ -62,6 +62,22 @@ jobs:
     # dan compose file /sonora/docker-compose.yml di VPS yang pakai image GHCR.
     if: ${{ vars.VPS_HOST != '' }}
     steps:
+      - name: Diagnose secrets presence (annotations only, values never printed)
+        env:
+          H: ${{ secrets.VPS_HOST }}
+          U: ${{ secrets.VPS_USER }}
+          K: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          missing=""
+          [ -z "$H" ] && missing="$missing VPS_HOST"
+          [ -z "$U" ] && missing="$missing VPS_USER"
+          [ -z "$K" ] && missing="$missing VPS_SSH_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::MISSING SECRETS:$missing - add them in Settings > Secrets and variables > Actions > Secrets tab"
+          else
+            echo "::error::All secrets set. Key first line: $(echo "$K" | head -c 34), last line: $(echo "$K" | tail -1 | head -c 25)"
+          fi
+
       - name: Diagnose connectivity (result visible via public annotations API)
         run: |
           if timeout 15 bash -c 'cat < /dev/null > /dev/tcp/45.198.149.134/2104' 2>/dev/null; then
@@ -69,6 +85,7 @@ jobs:
           else
             echo "::error::TCP-BLOCKED: GitHub runner CANNOT reach 45.198.149.134:2104"
           fi
+
 
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1
