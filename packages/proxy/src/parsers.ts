@@ -89,10 +89,17 @@ export interface EndpointInfo {
   browseType?: 'album' | 'artist' | 'playlist';
 }
 
+const VIDEO_ID_RE = /^[A-Za-z0-9_-]{11}$/;
+
 export function endpointInfo(nav?: NavigationEndpoint): EndpointInfo {
   if (!nav) return {};
   const { watchEndpoint: we, browseEndpoint: be, watchPlaylistEndpoint: wpe } = nav;
-  if (we) return { videoId: we.videoId, playlistId: we.playlistId };
+  if (we) {
+    // Guard invalid videoId di navigation endpoint (renderer non-song
+    // kadang isi field ini dengan blob yang bukan videoId 11-char).
+    const vid = we.videoId && VIDEO_ID_RE.test(we.videoId) ? we.videoId : undefined;
+    return { videoId: vid, playlistId: we.playlistId };
+  }
   if (wpe) return { playlistId: wpe.playlistId, watchPlaylist: true };
   if (be) {
     const id = be.browseId;
@@ -173,16 +180,22 @@ export function parseListItem(r: ListItemRenderer): ParsedItem | null {
     .filter(Boolean)
     .join(' • ');
 
-  let videoId = r.playlistItemData?.videoId ?? null;
+  // YouTube videoId kanonik: exactly 11 chars A-Z/a-z/0-9/-/_. Fallback path
+  // (overlay.watchEndpoint, cols[0].runs) kadang pungut blob dari renderer
+  // lain — kalau lolos ke client, /stream 500 ("This video is unavailable").
+  const takeIfValid = (v: string | null | undefined): string | null =>
+    v && VIDEO_ID_RE.test(v) ? v : null;
+
+  let videoId = takeIfValid(r.playlistItemData?.videoId);
   if (!videoId && cols[0]?.runs) {
     const we = (cols[0].runs as NavRun[])[0]?.navigationEndpoint?.watchEndpoint;
-    if (we) videoId = we.videoId;
+    videoId = takeIfValid(we?.videoId);
   }
   if (!videoId) {
     const we = findFirst<NavigationEndpoint>(r.overlay ?? {}, 'watchEndpoint') as
       | { videoId: string }
       | undefined;
-    if (we) videoId = we.videoId;
+    videoId = takeIfValid(we?.videoId);
   }
 
   const navInfo = endpointInfo(r.navigationEndpoint);
