@@ -68,6 +68,9 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           port: 2104
+          key: ${{ secrets.VPS_SSH_KEY }}
+          allenvs: false
+          script_stop: true
           script: |
             cd /sonora
             docker compose pull
