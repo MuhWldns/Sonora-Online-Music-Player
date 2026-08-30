@@ -66,4 +66,5 @@ npx tsc --noEmit           # typecheck
 - Commit granular per logika perubahan; conventional commits (`feat:`, `fix:`, `docs:`, `ci:`).
 - Setelah selesai fase: update README.md (root) + AGENTS.md ini agar tetap sinkron.
 - Deploy otomatis via push — jangan SSH manual ke VPS untuk update kode kecuali pipeline rusak.
+- **Code discovery WAJIB via codebase-memory MCP** (project `D-Sonora-Music`, sudah ter-index): `search_graph` untuk cari simbol/definisi, `trace_path` untuk caller/callee, `get_code_snippet` untuk source persis, `search_code` untuk literal string, `get_architecture` untuk orientasi. `grep`/`glob` file lokal hanya untuk (a) verifikasi hasil edit di disk, (b) file yang tercatat belum ter-cover index (`check_index_coverage`), (c) config non-kode (gradle/manifest/json). Jangan buka file satu-satu kalau graph bisa jawab.
 - Smoke test produksi: `curl http://45.198.149.134:2310/healthz`
