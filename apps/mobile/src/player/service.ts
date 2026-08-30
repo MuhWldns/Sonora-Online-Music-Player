@@ -69,7 +69,10 @@ export async function setupPlayer(): Promise<void> {
   await setAudioModeAsync({
     playsInSilentMode: true,
     shouldPlayInBackground: true,
-    interruptionMode: 'doNotMix', // required for lockscreen controls
+    // 'mixWithOthers': skip audio-focus request entirely. Native expo-audio
+    // with 'doNotMix' requests AUDIOFOCUS_GAIN_TRANSIENT — MIUI/HyperOS can
+    // revoke transient focus immediately (player paused right after play).
+    interruptionMode: 'mixWithOthers',
   });
   player = createAudioPlayer();
   player.addListener('playbackStatusUpdate', onStatus);

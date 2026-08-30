@@ -11,7 +11,7 @@ import * as Keychain from 'react-native-keychain';
 
 import type { HomeResponse, NextResponse, PlayerResponse, SearchResponse } from './types';
 
-export const DEFAULT_PROXY_BASE = 'http://45.198.149.134:2310';
+export const DEFAULT_PROXY_BASE = 'https://sonora.rbxskuy.web.id';
 
 const COOKIE_SERVICE = 'com.sonora-music.yt-cookie';
 const PROXY_BASE_KEY = '@sonora/proxy-base';

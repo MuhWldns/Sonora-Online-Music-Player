@@ -228,8 +228,8 @@ function FullPlayer({ palette, onClose }: { palette: Palette; onClose: () => voi
 
 /** Docked above the tab bar whenever a track has been loaded. */
 export function PlayerChrome({ palette }: { palette: Palette }) {
-  const { index, playing, queue } = usePlayerState((s) => ({
-    index: s.index, playing: s.playing, queue: s.queue,
+  const { index, playing, queue, error } = usePlayerState((s) => ({
+    index: s.index, playing: s.playing, queue: s.queue, error: s.error,
   }));
   const track = queue[index];
   const [open, setOpen] = useState(false);
@@ -254,8 +254,8 @@ export function PlayerChrome({ palette }: { palette: Palette }) {
             <Text numberOfLines={1} style={[s.miniTitle, { color: palette.text }]}>
               {track.title}
             </Text>
-            <Text numberOfLines={1} style={[s.miniSub, { color: palette.textSecondary }]}>
-              {track.artist}
+            <Text numberOfLines={1} style={[s.miniSub, { color: error ? palette.error : palette.textSecondary }]}>
+              {error ? `Error: ${error}` : track.artist}
             </Text>
           </View>
           <IconButton
