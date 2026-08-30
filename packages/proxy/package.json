@@ -14,12 +14,12 @@
     "check:cf": "wrangler deploy --dry-run"
   },
   "dependencies": {
+    "@hono/node-server": "^1.13.0",
     "hono": "^4.12.0",
     "youtubei.js": "^18.0.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250101.0",
-    "@hono/node-server": "^1.13.0",
     "@types/node": "^26.4.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
