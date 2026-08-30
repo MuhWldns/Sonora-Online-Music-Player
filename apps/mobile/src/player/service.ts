@@ -62,10 +62,11 @@ export function getState(): PlayerState {
 }
 
 let player: AudioPlayer | null = null;
+let isSetup = false;
 let advancing = false; // dedupe didJustFinish firing more than once per track
 
 export async function setupPlayer(): Promise<void> {
-  if (player) return;
+  if (isSetup) return;
   await setAudioModeAsync({
     playsInSilentMode: true,
     shouldPlayInBackground: true,
@@ -74,25 +75,47 @@ export async function setupPlayer(): Promise<void> {
     // revoke transient focus immediately (player paused right after play).
     interruptionMode: 'mixWithOthers',
   });
-  player = createAudioPlayer();
-  player.addListener('playbackStatusUpdate', onStatus);
   // Android 13+ needs POST_NOTIFICATIONS for the media notification.
   requestNotificationPermissionsAsync().catch(() => {});
+  isSetup = true;
 }
 
+let statusCount = 0;
+let lastStatusStr = '';
+let lastUri = '';
+let lastReplaceErr = '';
 function onStatus(s: AudioStatus): void {
   const track = state.queue[state.index];
+  statusCount++;
+  let pbState = '?';
+  if ('playbackState' in s && typeof s.playbackState === 'string') pbState = s.playbackState;
+  let reason: string | null = null;
+  if ('reasonForWaitingToPlay' in s) {
+    const r = s.reasonForWaitingToPlay;
+    if (typeof r === 'string') reason = r;
+  }
+  lastStatusStr =
+    `#${statusCount} state=${pbState} load=${s.isLoaded} play=${s.playing} buf=${s.isBuffering}` +
+    ` t=${s.currentTime.toFixed(1)} d=${s.duration.toFixed(1)} rate=${s.playbackRate}` +
+    (reason ? ` wait=${reason}` : '') +
+    (s.error ? ` ERR=${s.error}` : '') +
+    (lastReplaceErr ? ` LOAD_ERR=${lastReplaceErr}` : '');
   emit({
     playing: s.playing,
     buffering: s.isBuffering,
     currentTime: s.currentTime,
     duration: s.duration > 0 ? s.duration : (track?.durationSec ?? 0),
-    error: s.error,
+    error: s.error ?? lastReplaceErr ?? null,
   });
   // Source finished loading after replace(): this is the reliable moment to
   // start playback — calling play() synchronously after replace() races the
   // loader and can be dropped on Android.
-  if (s.isLoaded && !s.playing && s.currentTime === 0 && !s.didJustFinish && wantPlay) {
+  // Gate auto-play saat source siap. Guard `currentTime===0` dihapus: expo-audio
+  // di new-arch kadang emit event pertama dengan currentTime>0 (preroll decode),
+  // menyebabkan cabang play() tidak pernah masuk → UI diam tanpa error.
+  // `wantPlay` di-consume agar tidak re-trigger di status berikutnya.
+  if (s.isLoaded && wantPlay && !s.playing && !s.didJustFinish) {
+    wantPlay = false;
     player?.play();
   }
   if (s.didJustFinish && !advancing) {
@@ -103,11 +126,16 @@ function onStatus(s: AudioStatus): void {
   }
 }
 
+export function getStatusDebug(): string {
+  const base = lastStatusStr || 'no status events yet';
+  return `${base}\nuri=${lastUri || '(none)'}`;
+}
+
 let wantPlay = false; // set by startTrack; consumed by onStatus when loaded
 
 function startTrack(i: number): void {
   const track = state.queue[i];
-  if (!track || !player) return;
+  if (!track || !isSetup) return;
   wantPlay = true;
   emit({
     index: i,
@@ -116,17 +144,42 @@ function startTrack(i: number): void {
     error: null,
     buffering: true,
   });
-  player.setActiveForLockScreen(true, {
-    title: track.title,
-    artist: track.artist,
-    artworkUrl: track.thumbnail ?? undefined,
-  });
-  // Async: proxy base resolves from storage; replace() starts loading, and
-  // onStatus starts playback once the source is actually loaded.
-  streamUrl(track.videoId).then((uri) => {
-    if (state.queue[state.index] !== track) return; // user skipped ahead
-    player?.replace({ uri, name: track.title });
-  });
+  lastReplaceErr = '';
+  // expo-audio Android 57 bug: createAudioPlayer(null) + replace() nanti
+  // membuat ExoPlayer stuck di STATE_IDLE karena AudioModule.replace() digated
+  // oleh `availableCommands.contains(COMMAND_CHANGE_MEDIA_ITEMS)` yang belum
+  // populate sampai setMediaSource pertama dijalankan. Fix: setiap track buat
+  // player baru dengan source non-null di Constructor → init block native
+  // langsung panggil setMediaSource + prepare().
+  streamUrl(track.videoId)
+    .then((uri) => {
+      lastUri = uri;
+      if (state.queue[state.index] !== track) return; // user skipped ahead
+      // Release previous player: remove() drop dari native players map,
+      // dereference JS → sharedObjectDidRelease fire, listener unlink, ref.release().
+      const prev = player;
+      if (prev) {
+        try { prev.remove(); } catch { /* ignore double-remove */ }
+      }
+      try {
+        const next = createAudioPlayer({ uri, name: track.title });
+        next.volume = 1;
+        next.addListener('playbackStatusUpdate', onStatus);
+        next.setActiveForLockScreen(true, {
+          title: track.title,
+          artist: track.artist,
+          artworkUrl: track.thumbnail ?? undefined,
+        });
+        player = next;
+      } catch (e) {
+        lastReplaceErr = e instanceof Error ? e.message : String(e);
+        emit({ error: lastReplaceErr, buffering: false });
+      }
+    })
+    .catch((e) => {
+      lastReplaceErr = e instanceof Error ? e.message : String(e);
+      emit({ error: lastReplaceErr, buffering: false });
+    });
 }
 
 export function togglePlay(): void {

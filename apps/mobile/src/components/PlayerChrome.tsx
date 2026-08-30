@@ -22,6 +22,7 @@ import type { IconName } from './Icon';
 import { formatSec } from './TrackRow';
 import {
   getState,
+  getStatusDebug,
   nextTrack,
   playAt,
   prevTrack,
@@ -186,6 +187,14 @@ function FullPlayer({ palette, onClose }: { palette: Palette; onClose: () => voi
             ) : error ? (
               <Text style={[s.bufState, { color: palette.error }]}>Gagal memuat: {error}</Text>
             ) : null}
+            {__DEV__ ? (
+              <Text
+                style={[s.bufState, { color: palette.textSecondary, fontSize: 10 }]}
+                numberOfLines={4}
+              >
+                dbg: {getStatusDebug()}
+              </Text>
+            ) : null}
             <ProgressSlider
               currentTime={currentTime}
               duration={duration}
@@ -216,9 +225,9 @@ function FullPlayer({ palette, onClose }: { palette: Palette; onClose: () => voi
                 accessibilityLabel="Berikutnya"
               />
             </View>
-            <View style={s.miniStateRow}>
+            <Text style={[s.miniStateRow, { color: palette.textSecondary }]}>
               {index + 1}/{queue.length} dalam antrean
-            </View>
+            </Text>
           </View>
         )}
       </View>
