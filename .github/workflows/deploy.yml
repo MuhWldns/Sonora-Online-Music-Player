@@ -62,6 +62,14 @@ jobs:
     # dan compose file /sonora/docker-compose.yml di VPS yang pakai image GHCR.
     if: ${{ vars.VPS_HOST != '' }}
     steps:
+      - name: Diagnose connectivity (result visible via public annotations API)
+        run: |
+          if timeout 15 bash -c 'cat < /dev/null > /dev/tcp/45.198.149.134/2104' 2>/dev/null; then
+            echo "::error::TCP-OK: GitHub runner CAN reach 45.198.149.134:2104 - failure is key/auth"
+          else
+            echo "::error::TCP-BLOCKED: GitHub runner CANNOT reach 45.198.149.134:2104"
+          fi
+
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1
         with:
