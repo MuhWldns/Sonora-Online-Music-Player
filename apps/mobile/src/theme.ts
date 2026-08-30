@@ -7,6 +7,7 @@ import { DarkTheme, DefaultTheme } from '@react-navigation/native';
 import type { Theme } from '@react-navigation/native';
 
 export const ACCENT = '#F59E0B'; // amber-500; Sonora signature
+export const ACCENT_DIM = '#B45309'; // amber-700 — accent text on light surfaces
 
 export interface Palette {
   background: string;
@@ -16,8 +17,10 @@ export interface Palette {
   textSecondary: string;
   outline: string;
   accent: string;
+  accentText: string;
   onAccent: string;
   error: string;
+  onSurfaceVariant: string;
 }
 
 export const lightPalette: Palette = {
@@ -28,8 +31,10 @@ export const lightPalette: Palette = {
   textSecondary: '#6B6862',
   outline: '#E0DED8',
   accent: ACCENT,
+  accentText: ACCENT_DIM,
   onAccent: '#1A1917',
   error: '#B3261E',
+  onSurfaceVariant: '#49454F',
 };
 
 export const darkPalette: Palette = {
@@ -40,8 +45,10 @@ export const darkPalette: Palette = {
   textSecondary: '#A8A49C',
   outline: '#38352F',
   accent: ACCENT,
+  accentText: '#FBBF24', // amber-400 — accent text on dark surfaces
   onAccent: '#1A1917',
   error: '#F2B8B5',
+  onSurfaceVariant: '#CAC4D0',
 };
 
 export const navLightTheme: Theme = {
@@ -98,3 +105,9 @@ export const radius = {
 
 /** Minimum touch target per Android guidance. */
 export const TOUCH_TARGET = 48;
+
+/** Elevation for floating surfaces (mini-player, player sheet). */
+export const elevation = {
+  raised: 2,
+  sheet: 8,
+} as const;
