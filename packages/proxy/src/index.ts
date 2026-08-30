@@ -193,12 +193,14 @@ export function createApp(deps: AppDeps): Hono {
     const format = info.chooseFormat({ type: 'audio', quality: 'best' });
     const url = await format.decipher(yt.session.player);
 
+    // googlevideo tolak tanpa Range + browser UA (403). Selalu kirim Range
+    // ke upstream; pakai Range client kalau ada, else fallback bytes=0-.
+    const clientRange = c.req.header('range');
     const upstream = await fetch(url, {
       headers: {
-        // googlevideo menolak request tanpa Range + browser UA (403 — hasil PoC)
         'User-Agent':
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-        Range: c.req.header('range') ?? 'bytes=0-',
+        Range: clientRange ?? 'bytes=0-',
       },
     });
     if (!upstream.ok || !upstream.body)
@@ -206,12 +208,26 @@ export function createApp(deps: AppDeps): Hono {
 
     const headers = new Headers();
     headers.set('content-type', format.mime_type ?? 'audio/mp4');
-    const len = upstream.headers.get('content-length');
-    if (len) headers.set('content-length', len);
-    const cr = upstream.headers.get('content-range');
-    if (cr) headers.set('content-range', cr);
     headers.set('accept-ranges', 'bytes');
-    return new Response(upstream.body, { status: upstream.status, headers });
+
+    if (clientRange) {
+      // Client minta Range → forward 206 + content-range apa adanya.
+      const len = upstream.headers.get('content-length');
+      if (len) headers.set('content-length', len);
+      const cr = upstream.headers.get('content-range');
+      if (cr) headers.set('content-range', cr);
+      return new Response(upstream.body, { status: upstream.status, headers });
+    }
+
+    // Client tanpa Range → normalize ke 200 OK. ExoPlayer probe awal
+    // reject 206 tak diminta (stuck IDLE tanpa onPlayerError). Content-length
+    // pakai total size dari upstream content-range ("bytes 0-N/TOTAL"), bukan
+    // slice size. Body bisa lebih pendek dari total — client akan Range-request
+    // sisanya. Kalau content-range tidak ada, drop content-length (chunked).
+    const cr = upstream.headers.get('content-range');
+    const totalMatch = cr?.match(/\/(\d+)\s*$/);
+    if (totalMatch) headers.set('content-length', totalMatch[1]);
+    return new Response(upstream.body, { status: 200, headers });
   });
 
   app.onError((err, c) => {
