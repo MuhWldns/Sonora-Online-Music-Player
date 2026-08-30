@@ -1,4 +1,6 @@
 # Sonora Music — Proxy
+> **Live**: proxy produksi berjalan di VPS — `http://45.198.149.134:2310` (Docker, auto-deploy dari branch `main` via GitHub Actions).
+
 
 Proxy InnerTube (YouTube Music) untuk app Sonora (React Native). **Satu codebase, dua target deploy**: Node (VPS/Docker, utama) dan Cloudflare Workers (opsi instan).
 
