@@ -72,9 +72,12 @@ export const next = (videoId: string) => api<NextResponse>('/next', { videoId })
 
 export const player = (videoId: string) => api<PlayerResponse>('/player', { videoId });
 
-/** Playback source: relay via proxy (IP-safe fallback path). */
+/** Playback source: relay via proxy (IP-safe fallback path). videoId
+ * di-encode karena bisa mengandung karakter URL-unsafe walau format
+ * kanonik YouTube (A-Z/a-z/0-9/-/_) — defensive terhadap parser bug
+ * yang bisa nyasarkan blob non-videoId ke slot ini. */
 export async function streamUrl(videoId: string): Promise<string> {
-  return `${await getProxyBase()}/stream?videoId=${videoId}`;
+  return `${await getProxyBase()}/stream?videoId=${encodeURIComponent(videoId)}`;
 }
 
 export const healthz = (base?: string) =>
