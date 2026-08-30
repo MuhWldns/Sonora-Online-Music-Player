@@ -86,24 +86,27 @@ jobs:
             echo "::error::TCP-BLOCKED: GitHub runner CANNOT reach 45.198.149.134:2104"
           fi
 
-      - name: Normalize SSH key (wrap base64 body with PEM header/footer if missing)
+      - name: Write SSH key to temp file (auto-wrap base64 body if PEM header missing)
         env:
           RAW_KEY: ${{ secrets.VPS_SSH_KEY }}
         run: |
+          KEYFILE="$RUNNER_TEMP/sonora_id_key"
           if echo "$RAW_KEY" | head -1 | grep -q "BEGIN OPENSSH"; then
-            printf 'KEY%s\n%s\n%s\n' "<<SONORA_EOF" "$RAW_KEY" "SONORA_EOF" >> "$GITHUB_ENV"
+            printf '%s\n' "$RAW_KEY" > "$KEYFILE"
             echo "key already has PEM header"
           else
-            printf 'KEY%s\n%s\n%s\n%s\n' "<<SONORA_EOF" "-----BEGIN OPENSSH PRIVATE KEY-----" "$RAW_KEY" "-----END OPENSSH PRIVATE KEY-----" "SONORA_EOF" >> "$GITHUB_ENV"
-            echo "::error::VPS_SSH_KEY was base64-body only (no PEM header/footer) - auto-wrapped. Please re-paste the FULL key file."
+            printf '%s\n%s\n%s\n' "-----BEGIN OPENSSH PRIVATE KEY-----" "$RAW_KEY" "-----END OPENSSH PRIVATE KEY-----" > "$KEYFILE"
+            echo "::warning::VPS_SSH_KEY secret lacks PEM header/footer (base64 body only) - auto-wrapped. Re-paste the FULL key file to fix properly."
           fi
+          chmod 600 "$KEYFILE"
 
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
-          key: ${{ env.KEY }}
+          port: 2104
+          key_path: ${{ runner.temp }}/sonora_id_key
           debug: true
           script: |
             cd /sonora
