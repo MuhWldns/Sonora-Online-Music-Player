@@ -4,16 +4,16 @@
 
 The proxy is portable by design: **the same codebase runs as a Docker container on your own VPS or deploys in seconds to Cloudflare Workers.** Authentication is cookie-based — your account stays yours, credentials never leave your device except per-request, and the server stays fully stateless. Audio streams directly from Google's CDN to the player, with a server-side relay fallback when IP-bound stream URLs reject the client.
 
-> ⚠️ Early stage: the proxy is working and verified; the mobile app is under active development.
+> Early stage: the proxy is working and verified; the mobile app is under active development.
 
 ## Features
 
-- 🔍 Search (songs, albums, artists, playlists) via YouTube Music
-- 🏠 Home feed with your account's personalized recommendations
-- 📚 Library & liked songs from your own account (cookie-authenticated)
-- 🎵 Audio playback with queue/radio (up next) support
-- 🔐 Credentials stored only on your device — server is stateless
-- 🐳 One-command deploy on any VPS via Docker, or instant Cloudflare Workers deploy
+- Search (songs, albums, artists, playlists) via YouTube Music
+- Home feed with your account's personalized recommendations
+- Library & liked songs from your own account (cookie-authenticated)
+- Audio playback with queue/radio (up next) support
+- Credentials stored only on your device — server is stateless
+- One-command deploy on any VPS via Docker, or instant Cloudflare Workers deploy
 
 ## Repository layout
 
