@@ -16,6 +16,7 @@ import type { AudioPlayer, AudioStatus } from 'expo-audio';
 
 import { next, streamUrl } from '../api/client';
 import type { ParsedItem, QueueItem } from '../api/types';
+import { stopAndReleasePlayer } from './lifecycle';
 
 export interface PlayerTrack {
   videoId: string;
@@ -159,7 +160,8 @@ function startTrack(i: number): void {
       // dereference JS → sharedObjectDidRelease fire, listener unlink, ref.release().
       const prev = player;
       if (prev) {
-        try { prev.remove(); } catch { /* ignore double-remove */ }
+        player = null;
+        try { stopAndReleasePlayer(prev); } catch { /* ignore double-release */ }
       }
       try {
         const next = createAudioPlayer({ uri, name: track.title });
