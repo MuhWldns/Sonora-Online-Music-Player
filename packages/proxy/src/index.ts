@@ -14,6 +14,7 @@ import type { CacheAdapter } from './cache.js';
 import { createPlaybackInnertube, getDataInnertube, type InnertubeDeps } from './innertube.js';
 import type { Innertube as InnertubeInstance } from 'youtubei.js/agnostic';
 import { findAll, findFirst, parseListItem, parseSections, parseTwoRow, text, thumbs, type ParsedItem } from './parsers.js';
+import { upstreamRangeFor } from './stream-range.js';
 
 export interface AppDeps extends InnertubeDeps {
   cache: CacheAdapter;
@@ -193,14 +194,15 @@ export function createApp(deps: AppDeps): Hono {
     const format = info.chooseFormat({ type: 'audio', quality: 'best' });
     const url = await format.decipher(yt.session.player);
 
-    // googlevideo tolak tanpa Range + browser UA (403). Selalu kirim Range
-    // ke upstream; pakai Range client kalau ada, else fallback bytes=0-.
+    // googlevideo menolak open-ended Range (`bytes=N-`) secara intermiten,
+    // tetapi menerima bounded Range. Relay satu chunk per request; Media3 akan
+    // meminta chunk berikutnya berdasarkan content-range.
     const clientRange = c.req.header('range');
     const upstream = await fetch(url, {
       headers: {
         'User-Agent':
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-        Range: clientRange ?? 'bytes=0-',
+        Range: upstreamRangeFor(clientRange),
       },
     });
     if (!upstream.ok || !upstream.body)
@@ -292,7 +294,10 @@ function parseCardShelf(top: Record<string, unknown>) {
   const nav = first?.navigationEndpoint as
     | { watchEndpoint?: { videoId: string }; browseEndpoint?: { browseId: string } }
     | undefined;
-  const videoId = nav?.watchEndpoint?.videoId;
+  // Guard: watchEndpoint di top-result card kadang berisi params/token
+  // non-videoId (bukan 11-char kanonik) — kalau lolos, /stream 500.
+  const rawVid = nav?.watchEndpoint?.videoId;
+  const videoId = rawVid && /^[A-Za-z0-9_-]{11}$/.test(rawVid) ? rawVid : undefined;
   const browseId = nav?.browseEndpoint?.browseId;
   let type = 'song';
   if (!videoId && browseId) {
