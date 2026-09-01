@@ -24,6 +24,13 @@ async function createMinter(): Promise<MinterState> {
     referrer: 'https://www.youtube.com/',
     userAgent: USER_AGENT,
   });
+  // BotGuard probes canvas entropy. JSDOM intentionally leaves getContext()
+  // unimplemented unless the native `canvas` addon is installed; the VPS image
+  // is Alpine and must stay free of native build dependencies. A deterministic
+  // empty context is sufficient for the integrity VM and mirrors unsupported
+  // browser canvas features without throwing.
+  dom.window.HTMLCanvasElement.prototype.getContext = (() => ({})) as never;
+
   const pageResponse = await fetch('https://www.youtube.com', {
     headers: {
       accept: '*/*',
