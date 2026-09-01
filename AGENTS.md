@@ -6,65 +6,65 @@ Panduan untuk AI agent yang bekerja di repo ini. Baca dulu sebelum mengubah apa 
 
 Sonora = music player pribadi berbasis YouTube Music dengan UI custom.
 
-Arsitektur client-server:
+## Arsitektur client-server
 
 ```
 apps/mobile (Expo RN, UI custom)
-   │  JSON via fetch — cookie YouTube dikirim per-request header x-yt-cookie
-   │  audio: fetch langsung dari googlevideo; fallback /stream (relay via proxy)
+   │ JSON via fetch — cookie YouTube dikirim per-request header x-yt-cookie
+   │ audio: /stream relay via proxy yang dikonfigurasi operator
    ▼
 packages/proxy (Hono, portable)
-   ├── src/        ← SEMUA logic endpoint (runtime-agnostic, web-standard API saja)
-   ├── server/     ← entrypoint: node.ts (VPS) / worker.ts (Cloudflare)
-   └── parsers.ts  ← raw InnerTube JSON → JSON bersih (jangan pakai node-class youtubei.js)
+   ├── src/        ← logic endpoint runtime-agnostic
+   ├── server/     ← entrypoint Node dan Cloudflare Worker
+   └── parsers.ts  ← raw InnerTube JSON → JSON bersih
 ```
 
 ## Aturan penting
 
-1. **Portabilitas proxy**: tidak ada API Node langsung di `src/` (hanya `fetch`/`Headers`/`Response` web-standard). `Innertube` constructor di-inject dari entrypoint (DI), bukan di-import di `src/`.
-2. **Data feed = raw JSON + parser sendiri** (`parsers.ts`). Node-class youtubei.js v18 (SuperParsedResult) terbukti tidak stabil — jangan migrate balik.
-3. **youtubei.js v18 butuh `Platform.shim.eval`** (custom JS evaluator) untuk decipher stream URL. Di-set di `server/node.ts` (Function constructor) dan `server/worker.ts` (+ flag `unsafe_eval` di wrangler.jsonc).
-4. **Server stateless**: cookie akun TIDAK PERNAH disimpan server — hanya header per-request. Jangan tambahkan persistence cookie.
-5. **googlevideo 403 tanpa `Range` + browser `User-Agent`** — sudah ditangani `/stream`. Jangan ubah header itu.
-6. **VPS pakai NAT**: app jalan di port internal (3030 untuk proxy), akses luar via port publik 45.198.149.134:2310. Jangan bind port publik di dalam konfigurasi.
+1. **Portabilitas proxy**: `src/` hanya memakai Web Standard API. `Innertube` di-inject dari entrypoint.
+2. **Data feed** memakai raw InnerTube JSON dan parser sendiri (`parsers.ts`).
+3. **Playback** membutuhkan `Platform.shim.eval` untuk decipher stream URL.
+4. **Server stateless**: cookie akun hanya diteruskan per-request dan tidak disimpan server.
+5. **Deployment URL, host, port, IP, dan SSH details adalah konfigurasi operator** — jangan commit ke source atau dokumentasi publik.
+6. **Jangan commit cookie YouTube, token, private key, atau file `.env.local`.**
 
 ## Commands
 
 ```bash
-# root (npm workspaces; pnpm RUSAK di mesin dev — pakai npm)
 npm install
-npm run proxy:dev          # proxy dev server localhost:3000
+npm run proxy:dev
 npm run proxy:typecheck
+npm run build -w @sonora-music/proxy
+npm run check:cf -w @sonora-music/proxy
 
-# proxy (packages/proxy)
-npm run build              # tsc → dist/
-npm run check:cf           # wrangler dry-run (validasi bundle Workers)
-
-# mobile (apps/mobile)
-npx expo start             # metro dev server
-npx tsc --noEmit           # typecheck
+cd apps/mobile
+npx expo start
+npx tsc --noEmit
 ```
 
 ## CI/CD
 
-- **CI** (tiap push/PR): typecheck proxy + app + workers dry-run.
-- **Deploy Proxy** (push main menyentuh `packages/proxy/**`):
-  1. Docker build (context REPO ROOT — lockfile & workspace di root) → push GHCR `ghcr.io/muhwldns/sonora-online-music-player/proxy`
-  2. SSH ke VPS (port 2104) → `/sonora/docker-compose.yml` → `compose pull && up -d`
-  3. Job deploy aktif jika repo variable `VPS_HOST` terisi; secrets: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`
-- **Live**: http://45.198.149.134:2310 (NAT → internal 3030 → container 3000)
+CI menjalankan typecheck proxy, typecheck mobile, dan Workers bundle dry-run. Deployment memakai GitHub Secrets milik operator. Detail URL deploy tidak disimpan di repository.
 
-## Known quirks (hasil PoC — jangan "perbaiki" tanpa alasan)
+## Public configuration
 
-- XFF tidak mengubah binding `ip=` stream URL (WEB_REMIX mengabaikan) → itu alasan `/stream` ada.
-- `/player` beruntun dalam waktu singkat bisa kena throttle googlevideo sementara.
-- Filter search pakai params protobuf base64 hardcoded di `src/index.ts` (FILTER_PARAMS).
-- Search layout modern: `musicCardShelfRenderer` + flat `itemSectionRenderer` (fallback parser menangani keduanya).
+Salin `.env.example` ke `.env.local`, lalu isi URL proxy milik instance yang kamu kontrol. Alternatifnya, isi URL melalui Settings aplikasi. `.env.local` tidak boleh di-commit.
 
 ## Workflow agent
 
-- Commit granular per logika perubahan; conventional commits (`feat:`, `fix:`, `docs:`, `ci:`).
-- Setelah selesai fase: update README.md (root) + AGENTS.md ini agar tetap sinkron.
-- Deploy otomatis via push — jangan SSH manual ke VPS untuk update kode kecuali pipeline rusak.
-- **Code discovery WAJIB via codebase-memory MCP** (project `D-Sonora-Music`, sudah ter-index): `search_graph` untuk cari simbol/definisi, `trace_path` untuk caller/callee, `get_code_snippet` untuk source persis, `search_code` untuk literal string, `get_architecture` untuk orientasi. `grep`/`glob` file lokal hanya untuk (a) verifikasi hasil edit di disk, (b) file yang tercatat belum ter-cover index (`check_index_coverage`), (c) config non-kode (gradle/manifest/json). Jangan buka file satu-satu kalau graph bisa jawab.
-- Smoke test produksi: `curl http://45.198.149.134:2310/healthz`
+- Gunakan commit granular dan pesan yang sesuai isi perubahan.
+- Deploy otomatis via push; jangan SSH manual ke VPS.
+- Verifikasi tidak ada secret atau endpoint privat yang ikut ter-track sebelum publikasi.
+- Untuk dokumentasi publik, gunakan placeholder seperti `https://your-proxy.example.com`.
+
+## Runtime boundary
+
+Node-only integration berada di `packages/proxy/server/`; `packages/proxy/src/` tetap portable.
+
+## Security
+
+Credential yang tertempel di chat atau issue harus dianggap compromised dan segera dirotasi.
+
+## License
+
+MIT

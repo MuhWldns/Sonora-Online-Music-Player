@@ -2,7 +2,7 @@
 
 **Status:** playback startup fixed and deployed; continuity and player-lifecycle follow-ups remain open  
 **Validated on:** MuMu Player, Android package `com.sonora.music`  
-**Live proxy:** <https://sonora.rbxskuy.web.id>  
+**Proxy:** configured per operator through local environment or app Settings
 **Primary fix:** `37f652a fix(proxy): bound upstream audio ranges`
 
 ## Executive summary
@@ -20,7 +20,7 @@ The deployed fix converts missing or open-ended ranges into a bounded 1 MiB upst
 
   ```text
   state=idle load=false play=false buf=false t=0.0
-  uri=https://sonora.rbxskuy.web.id/stream?videoId=-TVknpWcCIo
+  uri=<configured-proxy>/stream?videoId=<video-id>
   ```
 
 - Android's media session reported:
@@ -184,4 +184,4 @@ This is tracked separately because it belongs to navigation/data handling rather
 - Do not replace `/stream` with direct `/player` URLs without a new end-to-end proof on Android.
 - Keep Google Video experiments single-variable: range form, offset, size, and headers materially affect the response.
 - Verify playback with both app state and native state. A visible mini-player is not proof that an Android `AudioTrack` started.
-- Use the live health check at <https://sonora.rbxskuy.web.id/healthz> before production playback tests.
+- Use `/healthz` on the proxy URL configured for the environment before playback tests.

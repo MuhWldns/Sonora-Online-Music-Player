@@ -4,14 +4,16 @@
  * Cookie (YouTube account) is read from secure storage per-call and sent as
  * x-yt-cookie — the server is stateless and never stores it.
  * Proxy base URL is user-configurable (Settings), persisted in AsyncStorage,
- * default = production VPS.
+ * default = empty; configure a proxy URL in Settings or via EXPO_PUBLIC_PROXY_BASE.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Keychain from 'react-native-keychain';
 
 import type { BrowseResponse, HomeResponse, NextResponse, PlayerResponse, SearchResponse } from './types';
 
-export const DEFAULT_PROXY_BASE = 'https://sonora.rbxskuy.web.id';
+const configuredProxyBase = process.env.EXPO_PUBLIC_PROXY_BASE;
+export const DEFAULT_PROXY_BASE =
+  typeof configuredProxyBase === 'string' ? configuredProxyBase.trim() : '';
 
 const COOKIE_SERVICE = 'com.sonora-music.yt-cookie';
 const PROXY_BASE_KEY = '@sonora/proxy-base';

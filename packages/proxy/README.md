@@ -1,5 +1,5 @@
 # Sonora Music — Proxy
-> **Live**: proxy produksi berjalan di VPS — `http://45.198.149.134:2310` (Docker, auto-deploy dari branch `main` via GitHub Actions).
+Proxy deployment URL adalah konfigurasi operator dan tidak disimpan di source code. Jalankan instance sendiri, lalu masukkan URL-nya ke Settings aplikasi.
 
 
 Proxy InnerTube (YouTube Music) untuk app Sonora (React Native). **Satu codebase, dua target deploy**: Node (VPS/Docker, utama) dan Cloudflare Workers (opsi instan).
@@ -78,5 +78,5 @@ Butuh: `nodejs_compat` + `unsafe_eval` (sudah di `wrangler.jsonc`), plan **Paid*
 
 1. **Binding IP stream URL**: `X-Forwarded-For` diabaikan YouTube untuk binding `ip=` pada client WEB_REMIX — URL dari `/player` terikat IP server. Kalau HP gagal fetch langsung (403), client fallback ke `/stream` (relay, IP pasti cocok).
 2. **Rate limit**: googlevideo menolak fetch tanpa `Range` + browser `User-Agent` (403) — sudah ditangani di `/stream`. Request `/player` beruntun dalam waktu singkat bisa kena throttle sementara; pola pakai 1 user personal aman.
-3. **PO token**: belum diimplementasi. Kalau YouTube mulai mensyaratkan PO token untuk stream, tambahkan bgutils-js di layer `/player` (satu tempat).
+3. **PO token**: Node deployment generates content-bound tokens with `bgutils-js`; configure your own deployment and keep its URL outside the public repository.
 4. **Login**: Google memblokir login dari webview embedded — app RN memakai cookie hasil login browser (export via extension/paste), dikirim per-request `x-yt-cookie`.

@@ -20,7 +20,7 @@ Proxy InnerTube portable milik sendiri (VPS pribadi via Docker) + app native And
 
 ## Operating Context
 
-- Proxy live di VPS: http://45.198.149.134:2310 (NAT publik -> internal 3030 -> container 3000), auto-deploy via GitHub Actions
+- Proxy URL dikonfigurasi melalui `EXPO_PUBLIC_PROXY_BASE` saat build atau lewat Settings; jangan commit URL deployment pribadi
 - Audio playback lewat /stream (relay proxy, IP-safe); /player disimpan untuk optimasi future
 - Cookie YouTube dikirim per-request header x-yt-cookie, disimpan di Android Keychain per device
 - Tanpa cookie: search + home anonim tetap jalan; library/liked butuh cookie
