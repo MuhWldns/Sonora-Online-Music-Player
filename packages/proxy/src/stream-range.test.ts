@@ -14,3 +14,8 @@ test('bounds an open-ended client range to one relay chunk', () => {
 test('preserves an already bounded client range', () => {
   assert.equal(upstreamRangeFor('bytes=1024-2047'), 'bytes=1024-2047');
 });
+
+test('uses complete ranges when a valid PO token unlocks the stream', () => {
+  assert.equal(upstreamRangeFor(undefined, true), 'bytes=0-');
+  assert.equal(upstreamRangeFor('bytes=1048576-', true), 'bytes=1048576-');
+});

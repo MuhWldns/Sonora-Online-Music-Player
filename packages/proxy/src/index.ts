@@ -18,6 +18,7 @@ import { upstreamRangeFor } from './stream-range.js';
 
 export interface AppDeps extends InnertubeDeps {
   cache: CacheAdapter;
+  poToken?: import('./po-token.js').PoTokenProvider;
 }
 
 /** Raw InnerTube call, unwrap .data dari HttpResponse. */
@@ -166,9 +167,11 @@ export function createApp(deps: AppDeps): Hono {
     if (!videoId) return c.json({ error: 'missing videoId' }, 400);
 
     const yt = await createPlaybackInnertube(deps, cookieOf(c), clientIpOf(c));
-    const info = await yt.music.getInfo(videoId);
+    const poToken = await deps.poToken?.getToken(videoId);
+    const info = await yt.music.getInfo(videoId, poToken ? { po_token: poToken } : undefined);
     const format = info.chooseFormat({ type: 'audio', quality: 'best' });
-    const url = await format.decipher(yt.session.player);
+    const deciphered = await format.decipher(yt.session.player);
+    const url = poToken ? `${deciphered}&pot=${encodeURIComponent(poToken)}` : deciphered;
 
     return c.json({
       videoId,
@@ -190,9 +193,11 @@ export function createApp(deps: AppDeps): Hono {
     if (!videoId) return c.json({ error: 'missing videoId' }, 400);
 
     const yt = await createPlaybackInnertube(deps, cookieOf(c), clientIpOf(c));
-    const info = await yt.music.getInfo(videoId);
+    const poToken = await deps.poToken?.getToken(videoId);
+    const info = await yt.music.getInfo(videoId, poToken ? { po_token: poToken } : undefined);
     const format = info.chooseFormat({ type: 'audio', quality: 'best' });
-    const url = await format.decipher(yt.session.player);
+    const deciphered = await format.decipher(yt.session.player);
+    const url = poToken ? `${deciphered}&pot=${encodeURIComponent(poToken)}` : deciphered;
 
     // googlevideo menolak open-ended Range (`bytes=N-`) secara intermiten,
     // tetapi menerima bounded Range. Relay satu chunk per request; Media3 akan
@@ -202,7 +207,7 @@ export function createApp(deps: AppDeps): Hono {
       headers: {
         'User-Agent':
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-        Range: upstreamRangeFor(clientRange),
+        Range: upstreamRangeFor(clientRange, !!poToken),
       },
     });
     if (!upstream.ok || !upstream.body)
