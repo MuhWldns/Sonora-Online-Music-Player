@@ -15,6 +15,8 @@ import {
   Text,
   View,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon, SectionHeader } from '../components/Icon';
@@ -22,6 +24,8 @@ import { ShelfCard, SongRow } from '../components/TrackRow';
 import { home } from '../api/client';
 import type { ParsedItem, ParsedSection } from '../api/types';
 import { usePlayerState } from '../player/usePlayerState';
+import { browseTargetOf } from '../navigation/browseTarget';
+import type { RootStackParamList } from '../navigation/types';
 import { playSong } from '../player/service';
 import { spacing, typeScale } from '../theme';
 import type { Palette } from '../theme';
@@ -48,6 +52,7 @@ export function HomeScreen({ palette }: { palette: Palette }) {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const activeVideoId = usePlayerState((s) => s.queue[s.index]?.videoId);
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const insets = useSafeAreaInsets();
 
   const load = useCallback(async () => {
@@ -67,6 +72,14 @@ export function HomeScreen({ palette }: { palette: Palette }) {
   const onPlay = useCallback((item: ParsedItem) => {
     playSong(item).catch(() => {});
   }, []);
+
+  const onOpen = useCallback(
+    (item: ParsedItem) => {
+      const id = browseTargetOf(item);
+      if (id) navigation.navigate('Browse', { id, title: item.title });
+    },
+    [navigation],
+  );
 
   if (!sections && !error)
     return (
@@ -106,7 +119,7 @@ export function HomeScreen({ palette }: { palette: Palette }) {
             contentContainerStyle={styles.shelfContent}
           >
             {item.section.items.map((it, i) => (
-              <ShelfCard key={`${it.title}-${i}`} item={it} onOpen={() => {}} palette={palette} />
+              <ShelfCard key={`${it.title}-${i}`} item={it} onOpen={onOpen} palette={palette} />
             ))}
           </ScrollView>
         </View>

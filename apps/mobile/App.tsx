@@ -3,7 +3,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar, useColorScheme } from 'react-native';
 
-import { RootTabs } from './src/navigation/RootTabs';
+import { RootNavigator } from './src/navigation/RootNavigator';
 import { setupPlayer } from './src/player/service';
 import { darkPalette, lightPalette, navDarkTheme, navLightTheme } from './src/theme';
 
@@ -23,7 +23,7 @@ export default function App() {
     <SafeAreaProvider>
       <StatusBar barStyle={dark ? 'light-content' : 'dark-content'} />
       <NavigationContainer theme={dark ? navDarkTheme : navLightTheme}>
-        {ready ? <RootTabs palette={palette} /> : null}
+        {ready ? <RootNavigator palette={palette} /> : null}
       </NavigationContainer>
     </SafeAreaProvider>
   );

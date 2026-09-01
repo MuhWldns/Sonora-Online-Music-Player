@@ -37,6 +37,10 @@ export interface HomeResponse {
   sections: ParsedSection[];
 }
 
+export interface BrowseResponse {
+  sections: ParsedSection[];
+}
+
 export interface QueueItem {
   videoId: string;
   title: string;

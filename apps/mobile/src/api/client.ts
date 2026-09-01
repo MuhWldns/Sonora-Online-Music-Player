@@ -9,7 +9,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Keychain from 'react-native-keychain';
 
-import type { HomeResponse, NextResponse, PlayerResponse, SearchResponse } from './types';
+import type { BrowseResponse, HomeResponse, NextResponse, PlayerResponse, SearchResponse } from './types';
 
 export const DEFAULT_PROXY_BASE = 'https://sonora.rbxskuy.web.id';
 
@@ -67,6 +67,8 @@ export const search = (q: string, filter?: string) =>
   api<SearchResponse>('/search', { q, ...(filter ? { filter } : {}) });
 
 export const home = () => api<HomeResponse>('/home');
+
+export const browse = (id: string) => api<BrowseResponse>('/browse', { id });
 
 export const next = (videoId: string) => api<NextResponse>('/next', { videoId });
 

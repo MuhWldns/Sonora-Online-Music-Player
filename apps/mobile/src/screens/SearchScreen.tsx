@@ -13,12 +13,16 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon, IconButton } from '../components/Icon';
 import { ShelfCard, SongRow } from '../components/TrackRow';
 import { search } from '../api/client';
 import type { ParsedItem, ParsedSection } from '../api/types';
+import { browseTargetOf } from '../navigation/browseTarget';
+import type { RootStackParamList } from '../navigation/types';
 import { playSong } from '../player/service';
 import { usePlayerState } from '../player/usePlayerState';
 import { radius, spacing, TOUCH_TARGET, typeScale } from '../theme';
@@ -41,6 +45,7 @@ export function SearchScreen({ palette }: { palette: Palette }) {
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<TextInput>(null);
   const activeVideoId = usePlayerState((s) => s.queue[s.index]?.videoId);
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const insets = useSafeAreaInsets();
 
   const runSearch = useCallback(
@@ -73,6 +78,14 @@ export function SearchScreen({ palette }: { palette: Palette }) {
   const onPlay = useCallback((item: ParsedItem) => {
     playSong(item).catch(() => {});
   }, []);
+
+  const onOpen = useCallback(
+    (item: ParsedItem) => {
+      const id = browseTargetOf(item);
+      if (id) navigation.navigate('Browse', { id, title: item.title });
+    },
+    [navigation],
+  );
 
   const results: ParsedItem[] = [];
   for (const s of sections ?? [])
@@ -178,7 +191,7 @@ export function SearchScreen({ palette }: { palette: Palette }) {
                     </Text>
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.shelfContent}>
                       {s.items.map((it, i) => (
-                        <ShelfCard key={`${it.title}-${i}`} item={it} onOpen={() => {}} palette={palette} />
+                        <ShelfCard key={`${it.title}-${i}`} item={it} onOpen={onOpen} palette={palette} />
                       ))}
                     </ScrollView>
                   </View>
