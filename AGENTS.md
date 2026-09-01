@@ -16,8 +16,17 @@ apps/mobile (Expo RN, UI custom)
 packages/proxy (Hono, portable)
    ├── src/        ← logic endpoint runtime-agnostic
    ├── server/     ← entrypoint Node dan Cloudflare Worker
+   │   └── po-token-provider.ts ← BotGuard/WebPO provider untuk Node
    └── parsers.ts  ← raw InnerTube JSON → JSON bersih
 ```
+
+Mobile memiliki `RootNavigator` untuk tab + halaman Browse. Kartu playlist/album/artis dari Home dan Search membuka `/browse`; daftar playlist diparse dari `musicPlaylistShelfRenderer`.
+
+Playback Node memakai BotGuard/WebPO content-bound token melalui `bgutils-js`. Worker tetap portable untuk feed, tetapi provider PO-token fase ini hanya diaktifkan pada entrypoint Node.
+
+Player mobile menggunakan `expo-audio`. Saat mengganti track, player lama harus di-pause, di-remove, dan di-release sebelum player baru dibuat.
+
+Konfigurasi proxy mobile bersifat deployment-neutral: `EXPO_PUBLIC_PROXY_BASE` dibaca saat build, atau URL dapat diisi lewat Settings. Tanpa konfigurasi, app tidak memiliki endpoint default.
 
 ## Aturan penting
 
@@ -50,6 +59,8 @@ CI menjalankan typecheck proxy, typecheck mobile, dan Workers bundle dry-run. De
 
 Salin `.env.example` ke `.env.local`, lalu isi URL proxy milik instance yang kamu kontrol. Alternatifnya, isi URL melalui Settings aplikasi. `.env.local` tidak boleh di-commit.
 
+Untuk build release dengan konfigurasi privat, gunakan env lokal yang tidak di-commit. Nilai env publik yang dipakai saat bundling tetap dapat diekstrak dari APK; jangan memasukkan credential ke env mobile.
+
 ## Workflow agent
 
 - Gunakan commit granular dan pesan yang sesuai isi perubahan.
@@ -64,6 +75,13 @@ Node-only integration berada di `packages/proxy/server/`; `packages/proxy/src/` 
 ## Security
 
 Credential yang tertempel di chat atau issue harus dianggap compromised dan segera dirotasi.
+
+## Current implementation notes
+
+- `/browse` menangani playlist shelf yang nested di `twoColumnBrowseResultsRenderer`.
+- Node proxy memiliki BotGuard/WebPO provider dengan cache token per video dan single-flight minter refresh.
+- Cloudflare Worker belum mengaktifkan provider PO-token Node.
+- APK release dibangun dari `apps/mobile/android` dan sebaiknya disimpan di luar source repository.
 
 ## License
 
