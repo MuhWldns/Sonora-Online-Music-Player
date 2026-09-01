@@ -13,7 +13,7 @@ import { Hono } from 'hono';
 import type { CacheAdapter } from './cache.js';
 import { createPlaybackInnertube, getDataInnertube, type InnertubeDeps } from './innertube.js';
 import type { Innertube as InnertubeInstance } from 'youtubei.js/agnostic';
-import { findAll, findFirst, parseListItem, parseSections, parseTwoRow, text, thumbs, type ParsedItem } from './parsers.js';
+import { findAll, findFirst, parseBrowseSections, parseListItem, parseSections, parseTwoRow, text, thumbs, type ParsedItem } from './parsers.js';
 import { upstreamRangeFor } from './stream-range.js';
 
 export interface AppDeps extends InnertubeDeps {
@@ -118,8 +118,7 @@ export function createApp(deps: AppDeps): Hono {
     const yt = await getDataInnertube(deps, cookieOf(c));
     const browseId = normalizeBrowseId(id);
     const data = await rawExecute(yt, '/browse', { browseId });
-    const sl = findFirst<{ contents?: never[] }>(data, 'sectionListRenderer');
-    const sections = parseSections(sl?.contents ?? []);
+    const sections = parseBrowseSections(data);
 
     // grid (halaman mood/genre & beberapa related) → section
     for (const g of findAll<{ items?: Record<string, never>[]; header?: unknown }>(

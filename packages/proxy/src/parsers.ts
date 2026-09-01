@@ -95,8 +95,6 @@ export function endpointInfo(nav?: NavigationEndpoint): EndpointInfo {
   if (!nav) return {};
   const { watchEndpoint: we, browseEndpoint: be, watchPlaylistEndpoint: wpe } = nav;
   if (we) {
-    // Guard invalid videoId di navigation endpoint (renderer non-song
-    // kadang isi field ini dengan blob yang bukan videoId 11-char).
     const vid = we.videoId && VIDEO_ID_RE.test(we.videoId) ? we.videoId : undefined;
     return { videoId: vid, playlistId: we.playlistId };
   }
@@ -179,10 +177,6 @@ export function parseListItem(r: ListItemRenderer): ParsedItem | null {
     .map((c) => text(c ?? undefined))
     .filter(Boolean)
     .join(' • ');
-
-  // YouTube videoId kanonik: exactly 11 chars A-Z/a-z/0-9/-/_. Fallback path
-  // (overlay.watchEndpoint, cols[0].runs) kadang pungut blob dari renderer
-  // lain — kalau lolos ke client, /stream 500 ("This video is unavailable").
   const takeIfValid = (v: string | null | undefined): string | null =>
     v && VIDEO_ID_RE.test(v) ? v : null;
 
@@ -230,11 +224,21 @@ export interface ParsedSection {
 }
 
 interface SectionContainer {
-  musicCarouselShelfRenderer?: {
-    header?: unknown;
-    contents?: Record<string, never>[];
-  };
+  musicCarouselShelfRenderer?: { header?: unknown; contents?: Record<string, never>[] };
   musicShelfRenderer?: { title?: Runs; contents?: Record<string, never>[] };
+  musicPlaylistShelfRenderer?: { playlistId?: string; header?: unknown; contents?: Record<string, never>[] };
+}
+
+function parseContents(contents: Record<string, never>[] | undefined): ParsedItem[] {
+  return (contents ?? [])
+    .map((c) => {
+      const two = (c as { musicTwoRowItemRenderer?: TwoRowRenderer }).musicTwoRowItemRenderer;
+      if (two) return parseTwoRow(two);
+      const list = (c as { musicResponsiveListItemRenderer?: ListItemRenderer })
+        .musicResponsiveListItemRenderer;
+      return list ? parseListItem(list) : null;
+    })
+    .filter((x): x is ParsedItem => x !== null);
 }
 
 export function parseSections(contents: SectionContainer[] = []): ParsedSection[] {
@@ -242,30 +246,23 @@ export function parseSections(contents: SectionContainer[] = []): ParsedSection[
   for (const s of contents) {
     const car = s.musicCarouselShelfRenderer;
     const shelf = s.musicShelfRenderer;
+    const playlist = s.musicPlaylistShelfRenderer;
     if (car) {
-      const header = findFirst<Runs>(car.header, 'title');
-      const items = (car.contents ?? [])
-        .map((c) => {
-          const two = (c as { musicTwoRowItemRenderer?: TwoRowRenderer })
-            .musicTwoRowItemRenderer;
-          if (two) return parseTwoRow(two);
-          const list = (c as { musicResponsiveListItemRenderer?: ListItemRenderer })
-            .musicResponsiveListItemRenderer;
-          return list ? parseListItem(list) : null;
-        })
-        .filter((x): x is ParsedItem => x !== null);
-      if (items.length) sections.push({ title: text(header), items });
+      const items = parseContents(car.contents);
+      if (items.length) sections.push({ title: text(findFirst<Runs>(car.header, 'title')), items });
     } else if (shelf) {
-      const items = (shelf.contents ?? [])
-        .map((c) => {
-          const list = (c as { musicResponsiveListItemRenderer?: ListItemRenderer })
-            .musicResponsiveListItemRenderer;
-          return list ? parseListItem(list) : null;
-        })
-        .filter((x): x is ParsedItem => x !== null);
-      if (items.length)
-        sections.push({ title: text(shelf.title), items, list: true });
+      const items = parseContents(shelf.contents);
+      if (items.length) sections.push({ title: text(shelf.title), items, list: true });
+    } else if (playlist) {
+      const items = parseContents(playlist.contents);
+      if (items.length) sections.push({ title: text(findFirst<Runs>(playlist.header, 'title')), items, list: true });
     }
   }
   return sections;
+}
+
+export function parseBrowseSections(data: unknown): ParsedSection[] {
+  const lists = findAll<{ contents?: SectionContainer[] }>(data, 'sectionListRenderer');
+  const sections = lists.flatMap((list) => parseSections(list.contents ?? []));
+  return sections.filter((section, index) => sections.findIndex((s) => s.title === section.title) === index);
 }
