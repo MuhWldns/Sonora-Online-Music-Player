@@ -39,7 +39,7 @@ Pembagian kerja internal (hasil PoC):
 | `GET /search` | `q`, `filter=song\|video\|album\|artist\|playlist` | cache 10 menit |
 | `GET /home` | — | cache 5 menit; key personal vs anon terpisah |
 | `GET /library` | — | **401 tanpa** `x-yt-cookie` |
-| `GET /browse` | `id` | album/artist/playlist detail |
+| `GET /browse` | `id` | album/artist/playlist detail, including nested playlist shelves |
 | `GET /next` | `videoId` | radio queue (50 item) |
 | `GET /player` | `videoId` | URL stream deciphered (metadata + bitrate + mime) |
 | `GET /stream` | `videoId` | **relay fallback** — audio bytes lewat server |
