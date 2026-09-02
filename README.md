@@ -4,7 +4,7 @@ Copy `.env.example` to `.env.local` and set `EXPO_PUBLIC_PROXY_BASE` to the URL 
 
 **Sonora** is a self-hosted YouTube Music client for people who want full control over their listening experience. It pairs a React Native app with a completely custom UI against a lightweight proxy server that speaks YouTube's internal InnerTube API.
 
-The proxy is portable by design: **the same codebase runs as a Docker container on your own VPS or deploys in seconds to Cloudflare Workers.** Authentication is cookie-based — your account stays yours, credentials never leave your device except per-request, and the server stays fully stateless. Audio streams directly from Google's CDN to the player, with a server-side relay fallback when IP-bound stream URLs reject the client.
+The proxy runs as a Docker container on a self-hosted Node.js server. Authentication is cookie-based — your account stays yours, credentials never leave your device except per-request, and the server stays fully stateless. Audio is relayed through the proxy with content-bound PO tokens so IP-bound Google Video streams remain playable.
 
 > Early stage: the proxy is working and verified; the mobile app is under active development.
 
@@ -15,7 +15,7 @@ The proxy is portable by design: **the same codebase runs as a Docker container 
 - Library & liked songs from your own account (cookie-authenticated)
 - Audio playback with queue/radio (up next) support
 - Credentials stored only on your device — server is stateless
-- One-command deploy on any VPS via Docker, or instant Cloudflare Workers deploy
+- One-command deployment on a self-hosted Node.js server via Docker
 
 ## Repository layout
 
@@ -25,7 +25,7 @@ The proxy is portable by design: **the same codebase runs as a Docker container 
 ├── packages/
 │   └── proxy/           # InnerTube proxy (Hono + youtubei.js)
 │       ├── src/         #   runtime-agnostic app code
-│       ├── server/      #   entrypoints: Node (VPS) & Cloudflare Worker
+│       ├── server/      #   Node entrypoint; experimental Worker adapter retained
 │       ├── Dockerfile
 │       └── wrangler.jsonc
 └── .github/workflows/   # CI (typecheck) + deploy (GHCR image, VPS ssh)
@@ -73,16 +73,6 @@ docker compose up -d --build
 ```
 
 Or use the CI-built image from GHCR: `ghcr.io/muhwldns/sonora-online-music-player/proxy:latest`
-
-**Cloudflare Workers (instant alternative):**
-
-```bash
-cd packages/proxy
-npx wrangler kv namespace create CACHE   # put the id into wrangler.jsonc
-npm run deploy:cf
-```
-
-Requires the Workers **Paid** plan ($5/mo) — InnerTube response parsing exceeds the Free plan's 10 ms CPU limit.
 
 ### Mobile app
 

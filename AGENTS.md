@@ -22,7 +22,7 @@ packages/proxy (Hono, portable)
 
 Mobile memiliki `RootNavigator` untuk tab + halaman Browse. Kartu playlist/album/artis dari Home dan Search membuka `/browse`; daftar playlist diparse dari `musicPlaylistShelfRenderer`.
 
-Playback Node memakai BotGuard/WebPO content-bound token melalui `bgutils-js`. Worker tetap portable untuk feed, tetapi provider PO-token fase ini hanya diaktifkan pada entrypoint Node.
+Playback Node memakai BotGuard/WebPO content-bound token melalui `bgutils-js`. Cloudflare Worker hanya adapter eksperimental untuk feed dan bundle compatibility; jangan dokumentasikan atau deploy sebagai backend playback penuh.
 
 Player mobile menggunakan `expo-audio`. Saat mengganti track, player lama harus di-pause, di-remove, dan di-release sebelum player baru dibuat.
 

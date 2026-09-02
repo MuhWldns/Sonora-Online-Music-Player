@@ -2,7 +2,7 @@
 Proxy deployment URL adalah konfigurasi operator dan tidak disimpan di source code. Jalankan instance sendiri, lalu masukkan URL-nya ke Settings aplikasi.
 
 
-Proxy InnerTube (YouTube Music) untuk app Sonora (React Native). **Satu codebase, dua target deploy**: Node (VPS/Docker, utama) dan Cloudflare Workers (opsi instan).
+Proxy InnerTube (YouTube Music) untuk app Sonora (React Native). Backend production ditujukan untuk Node.js melalui Docker. Adapter Cloudflare Worker dipertahankan untuk eksperimen feed dan bundle compatibility, bukan playback penuh.
 
 ## Arsitektur
 
@@ -64,15 +64,9 @@ Tanpa Docker (Node 22+): `npm run build && npm start`.
 
 Di belakang reverse proxy (nginx/caddy): proxy harus meneruskan `x-forwarded-for`.
 
-## Deploy Cloudflare Workers (opsi instan)
+## Cloudflare Worker adapter
 
-```bash
-cd packages/proxy
-npx wrangler kv namespace create CACHE   # masukkan id-nya ke wrangler.jsonc
-npm run deploy:cf
-```
-
-Butuh: `nodejs_compat` + `unsafe_eval` (sudah di `wrangler.jsonc`), plan **Paid** ($5/bln) — parsing InnerTube melebihi CPU 10ms plan Free.
+Adapter Worker hanya untuk eksperimen endpoint feed (`/healthz`, `/search`, `/home`, `/browse`, `/next`, dan `/library`) serta CI bundle dry-run. Worker belum memiliki BotGuard/WebPO provider yang digunakan Node, sehingga `/player` dan `/stream` tidak didukung sebagai playback penuh.
 
 ## Catatan risiko (hasil PoC 2026-08)
 
