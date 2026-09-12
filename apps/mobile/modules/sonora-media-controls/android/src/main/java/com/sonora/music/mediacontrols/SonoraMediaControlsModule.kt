@@ -72,6 +72,17 @@ class SonoraMediaControlsModule : Module() {
       requireController().addMediaItems(tracks.map(::mediaItem))
     }.runOnQueue(Queues.MAIN)
 
+    /** Insert at a queue position: currentIndex+1 = "play next", count = "add to end". */
+    AsyncFunction("insertTracks") { tracks: List<SonoraTrackRecord>, index: Int ->
+      requireController().apply {
+        addMediaItems(index.coerceIn(0, mediaItemCount), tracks.map(::mediaItem))
+      }
+    }.runOnQueue(Queues.MAIN)
+
+    AsyncFunction("setShuffle") { enabled: Boolean ->
+      requireController().shuffleModeEnabled = enabled
+    }.runOnQueue(Queues.MAIN)
+
     AsyncFunction("play") { requireController().play() }.runOnQueue(Queues.MAIN)
     AsyncFunction("pause") { requireController().pause() }.runOnQueue(Queues.MAIN)
     AsyncFunction("next") { requireController().seekToNextMediaItem() }.runOnQueue(Queues.MAIN)
@@ -154,6 +165,7 @@ class SonoraMediaControlsModule : Module() {
         "buffering" to (player.playbackState == Player.STATE_BUFFERING),
         "currentTime" to player.currentPosition.coerceAtLeast(0L) / 1_000.0,
         "duration" to duration.coerceAtLeast(0L) / 1_000.0,
+        "shuffle" to player.shuffleModeEnabled,
         "error" to error
       )
     )

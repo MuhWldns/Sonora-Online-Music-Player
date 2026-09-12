@@ -4,13 +4,13 @@ plugins {
 }
 
 group = 'com.sonora.music.mediacontrols'
-version = '1.1.0'
+version = '1.2.0'
 
 android {
   namespace "com.sonora.music.mediacontrols"
   defaultConfig {
-    versionCode 3
-    versionName "1.1.0"
+    versionCode 4
+    versionName "1.2.0"
   }
 }
 

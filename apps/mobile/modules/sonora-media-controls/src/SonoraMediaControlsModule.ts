@@ -14,6 +14,7 @@ export type PlaybackStatus = {
   buffering: boolean;
   currentTime: number;
   duration: number;
+  shuffle: boolean;
   error?: string;
 };
 
@@ -25,6 +26,8 @@ declare class SonoraMediaControlsModule extends NativeModule<MediaControlEvents>
   setup(): Promise<void>;
   replaceQueue(tracks: NativeTrack[], startIndex: number): Promise<void>;
   appendTracks(tracks: NativeTrack[]): Promise<void>;
+  insertTracks(tracks: NativeTrack[], index: number): Promise<void>;
+  setShuffle(enabled: boolean): Promise<void>;
   play(): Promise<void>;
   pause(): Promise<void>;
   next(): Promise<void>;
