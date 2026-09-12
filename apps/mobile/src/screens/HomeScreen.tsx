@@ -26,7 +26,7 @@ import type { ParsedItem, ParsedSection } from '../api/types';
 import { usePlayerState } from '../player/usePlayerState';
 import { browseTargetOf } from '../navigation/browseTarget';
 import type { RootStackParamList } from '../navigation/types';
-import { playSong } from '../player/service';
+import { addItemToQueue, playSong } from '../player/service';
 import { spacing, typeScale } from '../theme';
 import type { Palette } from '../theme';
 
@@ -138,6 +138,7 @@ export function HomeScreen({ palette }: { palette: Palette }) {
             key={`${it.videoId ?? it.title}-${i}`}
             item={it}
             onPlay={onPlay}
+            onAddToQueue={addItemToQueue}
             palette={palette}
             active={it.videoId === activeVideoId}
           />

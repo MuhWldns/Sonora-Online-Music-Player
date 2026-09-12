@@ -2,10 +2,11 @@
  * Track rows (song list item) — the workhorse row of every streaming app.
  * Two variants: compact (search/results/library) and with-eq (queue sheet).
  */
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Icon } from './Icon';
 import type { IconName } from './Icon';
+import { getState } from '../player/service';
 import { usePlayerState } from '../player/usePlayerState';
 import { spacing, typeScale } from '../theme';
 import type { Palette } from '../theme';
@@ -27,21 +28,51 @@ function parseDur(d?: string): number {
 export function SongRow({
   item,
   onPlay,
+  onAddToQueue,
   palette,
   active,
 }: {
   item: ParsedItem;
   onPlay: (i: ParsedItem) => void;
+  onAddToQueue?: (i: ParsedItem, placement: 'next' | 'end') => void;
   palette: Palette;
   active: boolean;
 }) {
   const artist = item.artists?.map((a) => a.name).join(', ') || item.subtitle || '';
+  const queueable = Boolean(onAddToQueue && item.videoId);
+
+  const openQueueMenu = () => {
+    if (!onAddToQueue || !item.videoId) return;
+    // Read shuffle at open time (not via a subscription) so 50 rows cost
+    // nothing. With shuffle on, Media3 follows its shuffle order, so a
+    // "play next" insert would not actually play next — offer only append.
+    const shuffled = getState().shuffle;
+    Alert.alert(
+      item.title,
+      shuffled ? 'Tambahkan ke antrean (acak aktif)' : 'Tambahkan ke antrean',
+      [
+        ...(shuffled
+          ? []
+          : [
+              {
+                text: 'Putar berikutnya',
+                onPress: () => onAddToQueue(item, 'next' as const),
+              },
+            ]),
+        { text: 'Tambahkan ke akhir', onPress: () => onAddToQueue(item, 'end') },
+        { text: 'Batal', style: 'cancel' as const },
+      ],
+    );
+  };
+
   return (
     <Pressable
       onPress={() => onPlay(item)}
+      onLongPress={queueable ? openQueueMenu : undefined}
       disabled={!item.videoId}
       accessibilityRole="button"
       accessibilityLabel={`Putar ${item.title}`}
+      accessibilityHint={queueable ? 'Tekan lama untuk menambahkan ke antrean' : undefined}
       style={({ pressed }) => [styles.row, pressed && { opacity: 0.6 }]}
     >
       <Image

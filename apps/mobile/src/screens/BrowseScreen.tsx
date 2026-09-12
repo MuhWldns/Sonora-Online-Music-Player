@@ -18,7 +18,7 @@ import { Icon, IconButton, SectionHeader } from '../components/Icon';
 import { ShelfCard, SongRow } from '../components/TrackRow';
 import { browseTargetOf } from '../navigation/browseTarget';
 import type { RootStackParamList } from '../navigation/types';
-import { playSong } from '../player/service';
+import { addItemToQueue, playSong } from '../player/service';
 import { usePlayerState } from '../player/usePlayerState';
 import { spacing, typeScale } from '../theme';
 import type { Palette } from '../theme';
@@ -91,6 +91,7 @@ export function BrowseScreen({ navigation, route, palette }: Props) {
             key={`${entry.videoId ?? entry.title}-${index}`}
             item={entry}
             onPlay={(song) => playSong(song).catch(() => {})}
+            onAddToQueue={addItemToQueue}
             palette={palette}
             active={entry.videoId === activeVideoId}
           />

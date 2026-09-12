@@ -19,7 +19,7 @@ import { getCookie } from '../api/client';
 import type { ParsedItem, ParsedSection } from '../api/types';
 import { usePlayerState } from '../player/usePlayerState';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { playQueue, playSong } from '../player/service';
+import { addItemToQueue, playQueue, playSong } from '../player/service';
 import { spacing, typeScale } from '../theme';
 import type { Palette } from '../theme';
 
@@ -100,7 +100,13 @@ export function LibraryScreen({ palette }: { palette: Palette }) {
       data={songs.slice(0, 50)}
       keyExtractor={(it, i) => `${it.videoId ?? it.title}-${i}`}
       renderItem={({ item }) => (
-        <SongRow item={item} onPlay={onPlay} palette={palette} active={item.videoId === activeVideoId} />
+        <SongRow
+          item={item}
+          onPlay={onPlay}
+          onAddToQueue={addItemToQueue}
+          palette={palette}
+          active={item.videoId === activeVideoId}
+        />
       )}
       ListHeaderComponent={
         <View style={[styles.header, { paddingTop: insets.top + spacing.lg }]}>

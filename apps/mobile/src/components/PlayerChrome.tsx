@@ -11,7 +11,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  useWindowDimensions,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -28,6 +27,7 @@ import {
   prevTrack,
   seekTo,
   togglePlay,
+  toggleShuffle,
 } from '../player/service';
 import { usePlayerState } from '../player/usePlayerState';
 import { darkPalette, radius, spacing, typeScale } from '../theme';
@@ -44,47 +44,65 @@ function ProgressSlider({
   palette: Palette;
   onSeek: (sec: number) => void;
 }) {
-  const { width } = useWindowDimensions();
-  const trackW = Math.min(width - spacing.xl * 2, 400);
-  const ratio = duration > 0 ? Math.min(1, currentTime / duration) : 0;
+  // Width is measured from layout. The old formula capped at 400dp while the
+  // container stretched wider, so taps mapped to the wrong second.
+  const [trackW, setTrackW] = useState(0);
   const [scrubbing, setScrubbing] = useState<number | null>(null);
-  const shown = scrubbing ?? ratio;
+  const shownSec = scrubbing ?? currentTime;
+  // Fill width needs a 0..1 fraction; scrubbing holds seconds, so derive it.
+  const ratio = duration > 0 ? Math.max(0, Math.min(1, shownSec / duration)) : 0;
 
   function posToSec(x: number): number {
-    return Math.max(0, Math.min(duration, (x / trackW) * duration));
+    // `!(...)` also catches NaN, which a plain `<= 0` comparison would let through.
+    if (!(trackW > 0) || !(duration > 0)) return 0;
+    const clamped = Math.max(0, Math.min(trackW, x));
+    return (clamped / trackW) * duration;
   }
 
   return (
     <View style={s.progressWrap}>
-      <Pressable
+      <View
         accessibilityLabel="Ganti posisi lagu"
         accessibilityRole="adjustable"
-        hitSlop={12}
-        onLayout={(e) => {
-          /* trackW fixed by calc; layout kept for future device changes */
+        accessibilityValue={{
+          min: 0,
+          max: Math.max(1, Math.round(duration)),
+          now: Math.round(shownSec),
         }}
-        onPress={(e) => {
-          const x = e.nativeEvent.locationX;
-          onSeek(posToSec(x));
+        // Taller hit area than the 4dp visual track so the thumb is grabbable.
+        style={s.progressHit}
+        onLayout={(e) => setTrackW(e.nativeEvent.layout.width)}
+        onStartShouldSetResponder={() => true}
+        onMoveShouldSetResponder={() => true}
+        onResponderGrant={(e) => setScrubbing(posToSec(e.nativeEvent.locationX))}
+        onResponderMove={(e) => setScrubbing(posToSec(e.nativeEvent.locationX))}
+        onResponderRelease={(e) => {
+          onSeek(posToSec(e.nativeEvent.locationX));
           setScrubbing(null);
         }}
-        onPressOut={() => setScrubbing(null)}
-        onPressIn={(e) => setScrubbing(posToSec(e.nativeEvent.locationX))}
+        onResponderTerminate={() => setScrubbing(null)}
       >
         <View style={[s.progressTrack, { backgroundColor: palette.outline }]}>
           <View
             style={{
-              width: `${shown * 100}%`,
-              backgroundColor: palette.text,
+              width: `${ratio * 100}%`,
+              backgroundColor: palette.accent,
               height: '100%',
               borderRadius: 2,
             }}
           />
         </View>
-      </Pressable>
+        <View
+          pointerEvents="none"
+          style={[
+            s.progressThumb,
+            { backgroundColor: palette.accent, left: trackW > 0 ? `${ratio * 100}%` : 0 },
+          ]}
+        />
+      </View>
       <View style={s.progressTimes}>
         <Text style={[s.time, { color: palette.textSecondary }]}>
-          {formatSec(scrubbing ?? currentTime)}
+          {formatSec(shownSec)}
         </Text>
         <Text style={[s.time, { color: palette.textSecondary }]}>{formatSec(duration)}</Text>
       </View>
@@ -93,9 +111,17 @@ function ProgressSlider({
 }
 
 function FullPlayer({ palette, onClose }: { palette: Palette; onClose: () => void }) {
-  const { queue, index, playing, buffering, currentTime, duration, error } = usePlayerState(
-    (s) => s,
-  );
+  const { queue, index, playing, buffering, currentTime, duration, shuffle, error } =
+    usePlayerState((s) => ({
+      queue: s.queue,
+      index: s.index,
+      playing: s.playing,
+      buffering: s.buffering,
+      currentTime: s.currentTime,
+      duration: s.duration,
+      shuffle: s.shuffle,
+      error: s.error,
+    }));
   const track = queue[index];
   const [queueOpen, setQueueOpen] = useState(false);
   const insets = useSafeAreaInsets();
@@ -202,6 +228,13 @@ function FullPlayer({ palette, onClose }: { palette: Palette; onClose: () => voi
               onSeek={seekTo}
             />
             <View style={s.controls}>
+              <IconButton
+                name="shuffle"
+                size={28}
+                color={shuffle ? palette.accent : palette.textSecondary}
+                onPress={toggleShuffle}
+                accessibilityLabel={shuffle ? 'Matikan acak' : 'Nyalakan acak'}
+              />
               <IconButton
                 name="skip-previous"
                 size={40}
@@ -321,7 +354,16 @@ const s = StyleSheet.create({
   trackArtist: { fontSize: typeScale.body },
   bufState: { fontSize: typeScale.label },
   progressWrap: { alignSelf: 'stretch', marginTop: spacing.sm, gap: spacing.xs },
+  // Visual track stays thin; the hit area is padded so dragging is comfortable.
+  progressHit: { height: 32, justifyContent: 'center' },
   progressTrack: { height: 4, borderRadius: 2 },
+  progressThumb: {
+    position: 'absolute',
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    marginLeft: -7,
+  },
   progressTimes: { flexDirection: 'row', justifyContent: 'space-between' },
   time: { fontSize: typeScale.small, fontVariant: ['tabular-nums'] },
   controls: {

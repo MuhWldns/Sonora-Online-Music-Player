@@ -23,7 +23,7 @@ import { search } from '../api/client';
 import type { ParsedItem, ParsedSection } from '../api/types';
 import { browseTargetOf } from '../navigation/browseTarget';
 import type { RootStackParamList } from '../navigation/types';
-import { playSong } from '../player/service';
+import { addItemToQueue, playSong } from '../player/service';
 import { usePlayerState } from '../player/usePlayerState';
 import { radius, spacing, TOUCH_TARGET, typeScale } from '../theme';
 import type { Palette } from '../theme';
@@ -179,7 +179,13 @@ export function SearchScreen({ palette }: { palette: Palette }) {
           data={results.slice(0, 30)}
           keyExtractor={(it, i) => `${it.videoId ?? it.title}-${i}`}
           renderItem={({ item }) => (
-            <SongRow item={item} onPlay={onPlay} palette={palette} active={item.videoId === activeVideoId} />
+            <SongRow
+              item={item}
+              onPlay={onPlay}
+              onAddToQueue={addItemToQueue}
+              palette={palette}
+              active={item.videoId === activeVideoId}
+            />
           )}
           ListHeaderComponent={
             others.length ? (
