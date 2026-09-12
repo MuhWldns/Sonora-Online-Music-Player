@@ -179,9 +179,22 @@ The Android player no longer creates and tears down one `AudioPlayer` per track.
 
 This is tracked separately because it belongs to navigation/data handling rather than the audio transport.
 
+### D. Seek bar jumped outside the screen
+
+**Status:** fixed in 1.2.0.
+
+`ProgressSlider` stored the scrub position in **seconds** but rendered it directly as a CSS percentage (`width: ${shown * 100}%`), so tapping at second 154 produced a 15400% bar. The width was also hardcoded to 400dp while the container measured ~468dp, so taps mapped to the wrong second. The slider now measures its real width via `onLayout`, derives a clamped 0..1 ratio, and exposes a 32dp hit area with a visible thumb for dragging.
+
+### E. Queue mutations could desync JS and native state
+
+**Status:** fixed in 1.2.0.
+
+`state.queue` (JS) and the Media3 queue (native) were mutated in separate steps, so a radio seed and an add-to-queue insert could interleave: a track could appear twice, or remain in the JS queue while never playing. All queue mutations now run in one serialized slot (`serializeMutation`) with the JS emit inside it, so both queues change together. A timing sweep of 108 interleavings showed 18/36 divergences before the fix and 0/108 after.
+
 ## Operational notes
 
 - Do not replace `/stream` with direct `/player` URLs without a new end-to-end proof on Android.
 - Keep Google Video experiments single-variable: range form, offset, size, and headers materially affect the response.
 - Verify playback with both app state and native state. A visible mini-player is not proof that an Android `AudioTrack` started.
 - Use `/healthz` on the proxy URL configured for the environment before playback tests.
+- Do not await a `serializeMutation` op from inside another one; the inner op would wait on the outer op forever.
