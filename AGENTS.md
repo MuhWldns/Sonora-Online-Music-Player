@@ -24,7 +24,7 @@ Mobile memiliki `RootNavigator` untuk tab + halaman Browse. Kartu playlist/album
 
 Playback Node memakai BotGuard/WebPO content-bound token melalui `bgutils-js`. Cloudflare Worker hanya adapter eksperimental untuk feed dan bundle compatibility; jangan dokumentasikan atau deploy sebagai backend playback penuh.
 
-Player mobile menggunakan `expo-audio`. Saat mengganti track, player lama harus di-pause, di-remove, dan di-release sebelum player baru dibuat.
+Player mobile memakai local Expo module `sonora-media-controls` berbasis Media3. Antrean, auto-advance, background playback, dan kontrol notifikasi Android dimiliki native playback service.
 
 Konfigurasi proxy mobile bersifat deployment-neutral: `EXPO_PUBLIC_PROXY_BASE` dibaca saat build, atau URL dapat diisi lewat Settings. Tanpa konfigurasi, app tidak memiliki endpoint default.
 

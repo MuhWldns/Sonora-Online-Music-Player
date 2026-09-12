@@ -1,7 +1,7 @@
 # Android Audio Playback Incident
 
-**Status:** playback startup fixed and deployed; continuity and player-lifecycle follow-ups remain open  
-**Validated on:** MuMu Player, Android package `com.sonora.music`  
+**Status:** playback startup fixed; native queue and notification controls validated on Android
+**Validated on:** MuMu Player, Android package `com.sonora.music`
 **Proxy:** configured per operator through local environment or app Settings
 **Primary fix:** `37f652a fix(proxy): bound upstream audio ranges`
 
@@ -169,9 +169,9 @@ This needs a complete-body relay strategy for no-Range requests, not another iso
 
 ### B. Previous song can continue after selecting another song
 
-**Status:** reported, investigation pending.
+**Status:** replaced by native Media3 queue and validated on Android.
 
-The mobile service calls `AudioPlayer.remove()` before creating the next player. Expo Audio removes the player from its registry immediately, but native release is tied to shared-object lifetime. The next experiment must determine whether explicit `pause()` and `release()` are required before dropping the previous player.
+The Android player no longer creates and tears down one `AudioPlayer` per track. The app-owned `SonoraPlaybackService` now keeps one ExoPlayer playlist inside a MediaSession service. Selecting a new queue atomically stops and clears the old playlist before preparing the replacement; automatic transitions and notification play, pause, next, and previous commands are handled by Media3 without requiring the React Native activity to be open.
 
 ### C. Home Library content cannot be opened
 

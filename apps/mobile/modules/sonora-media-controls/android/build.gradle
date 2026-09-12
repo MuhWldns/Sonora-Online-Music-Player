@@ -1,0 +1,20 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.sonora.music.mediacontrols'
+version = '1.1.0'
+
+android {
+  namespace "com.sonora.music.mediacontrols"
+  defaultConfig {
+    versionCode 3
+    versionName "1.1.0"
+  }
+}
+
+dependencies {
+  implementation "androidx.media3:media3-exoplayer:1.9.0"
+  implementation "androidx.media3:media3-session:1.9.0"
+}

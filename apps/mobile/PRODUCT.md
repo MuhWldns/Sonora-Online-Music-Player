@@ -28,8 +28,8 @@ Proxy InnerTube portable milik sendiri (VPS pribadi via Docker) + app native And
 ## Capabilities and Constraints
 
 - Search (song/album/artist/playlist), home feed, radio queue (/next), playback, library & liked (cookie)
-- Expo SDK 57 (RN 0.86, React 19), react-native-track-player, react-native-keychain
-- Playback via /stream terbukti jalan (206 Partial Content, seek OK) — PoC app-side track-player masih perlu diverifikasi di device
+- Expo SDK 57 (RN 0.86, React 19), local Media3 playback module, react-native-keychain
+- Playback via /stream menggunakan antrean native agar auto-advance dan kontrol notifikasi tetap bekerja saat app background
 - Belum ada: player screen dengan controls, search screen, settings screen, library screen
 
 ## Brand Commitments
