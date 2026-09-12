@@ -2,7 +2,7 @@
  * Home: personalized feed. Large greeting header, horizontal shelves for
  * album/playlist/artist content, song lists inline. Canon streaming layout.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -15,7 +15,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -51,23 +51,29 @@ export function HomeScreen({ palette }: { palette: Palette }) {
   const [sections, setSections] = useState<ParsedSection[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const loadGeneration = useRef(0);
   const activeVideoId = usePlayerState((s) => s.queue[s.index]?.videoId);
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const insets = useSafeAreaInsets();
 
   const load = useCallback(async () => {
+    const generation = ++loadGeneration.current;
     try {
       const { sections: s } = await home();
+      if (generation !== loadGeneration.current) return;
       setSections(s);
       setError(null);
     } catch (e) {
+      if (generation !== loadGeneration.current) return;
       setError(e instanceof Error ? e.message : String(e));
     }
   }, []);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  useFocusEffect(
+    useCallback(() => {
+      void load();
+    }, [load]),
+  );
 
   const onPlay = useCallback((item: ParsedItem) => {
     playSong(item).catch(() => {});

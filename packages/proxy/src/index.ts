@@ -93,8 +93,7 @@ export function createApp(deps: AppDeps): Hono {
 
     const yt = await getDataInnertube(deps, cookie);
     const data = await rawExecute(yt, '/browse', { browseId: 'FEmusic_home' });
-    const sl = findFirst<{ contents?: never[] }>(data, 'sectionListRenderer');
-    const sections = parseSections(sl?.contents ?? []);
+    const sections = parseBrowseSections(data);
     const json = { sections };
     await deps.cache.set(cacheKey, json, 5 * 60_000);
     return c.json(json);
