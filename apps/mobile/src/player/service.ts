@@ -24,6 +24,7 @@ export interface PlayerState {
   buffering: boolean;
   currentTime: number;
   duration: number;
+  shuffle: boolean;
   error: string | null;
 }
 
@@ -34,6 +35,7 @@ let state: PlayerState = {
   buffering: false,
   currentTime: 0,
   duration: 0,
+  shuffle: false,
   error: null,
 };
 
@@ -63,6 +65,7 @@ function onStatus(status: PlaybackStatus): void {
     buffering: status.buffering,
     currentTime: status.currentTime,
     duration: status.duration > 0 ? status.duration : (track?.durationSec ?? 0),
+    shuffle: status.shuffle,
     error: status.error ?? null,
   });
 }
@@ -105,8 +108,26 @@ async function nativeTrack(track: PlayerTrack): Promise<NativeTrack> {
   };
 }
 
+/** All queue mutations run one at a time. Without this, playSong's radio seed
+ * and an addToQueue insert can interleave, leaving JS state.queue and the
+ * native Media3 queue in different orders.
+ *
+ * INVARIANT: an op must never await another serializeMutation call — the inner
+ * op would queue behind the outer one and wait forever. */
+let mutationChain: Promise<unknown> = Promise.resolve();
+
+function serializeMutation<T>(op: () => Promise<T>): Promise<T> {
+  const run = mutationChain.then(op, op);
+  mutationChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
 async function replaceQueue(queue: PlayerTrack[], startIndex: number): Promise<void> {
   const generation = ++queueGeneration;
+  // Optimistic emit so the player reflects the new track immediately.
   emit({
     queue,
     index: startIndex,
@@ -120,8 +141,14 @@ async function replaceQueue(queue: PlayerTrack[], startIndex: number): Promise<v
   try {
     await setupPlayer();
     const tracks = await Promise.all(queue.map(nativeTrack));
-    if (generation !== queueGeneration) return;
-    await MediaControls.replaceQueue(tracks, startIndex);
+    await serializeMutation(async () => {
+      if (generation !== queueGeneration) return;
+      // JS and native mutate inside ONE serialized slot. Emitting outside it
+      // let a queued insert land between the emit and the native call, which
+      // left state.queue and the Media3 queue permanently different.
+      emit({ queue, index: startIndex, buffering: true, currentTime: 0 });
+      await MediaControls.replaceQueue(tracks, startIndex);
+    });
   } catch (error) {
     if (generation !== queueGeneration) return;
     emit({ playing: false, buffering: false, error: errorMessage(error) });
@@ -171,16 +198,32 @@ export async function playSong(item: ParsedItem): Promise<void> {
   try {
     const result = await next(item.videoId);
     if (generation !== queueGeneration) return;
-    const existing = new Set(state.queue.map((track) => track.videoId));
-    const rest = result.queue
-      .filter((queued) => !queued.selected && !existing.has(queued.videoId))
-      .map(trackFromQueueItem);
-    if (!rest.length) return;
 
-    const nativeTracks = await Promise.all(rest.map(nativeTrack));
+    const candidates = result.queue
+      .filter((queued) => !queued.selected)
+      .map(trackFromQueueItem);
+    const resolved = await Promise.all(candidates.map(nativeTrack));
     if (generation !== queueGeneration) return;
-    emit({ queue: [...state.queue, ...rest] });
-    await MediaControls.appendTracks(nativeTracks);
+
+    // Dedupe, JS emit, and the native append all happen in ONE serialized
+    // slot. Recomputing the snapshot here (not before) means a concurrent
+    // addToQueue that already inserted a track cannot be duplicated.
+    await serializeMutation(async () => {
+      if (generation !== queueGeneration) return;
+      const existing = new Set(state.queue.map((track) => track.videoId));
+      const freshTracks: PlayerTrack[] = [];
+      const freshNative: NativeTrack[] = [];
+      candidates.forEach((track, i) => {
+        if (existing.has(track.videoId)) return;
+        existing.add(track.videoId);
+        freshTracks.push(track);
+        freshNative.push(resolved[i]);
+      });
+      if (!freshTracks.length) return;
+
+      emit({ queue: [...state.queue, ...freshTracks] });
+      await MediaControls.appendTracks(freshNative);
+    });
   } catch {
     // Radio seeding is optional; the selected track remains playable.
   }
@@ -198,12 +241,81 @@ export function playAt(index: number): void {
 }
 
 export function nextTrack(): void {
-  if (state.index + 1 >= state.queue.length) return;
+  // Under shuffle the native order is not the JS array order, so the
+  // "last item" guard would wrongly block a valid next.
+  if (!state.shuffle && state.index + 1 >= state.queue.length) return;
   MediaControls.next().catch((error) => emit({ error: errorMessage(error) }));
 }
 
 export function prevTrack(): void {
   MediaControls.previous().catch((error) => emit({ error: errorMessage(error) }));
+}
+
+/** Flip shuffle on the native player. The native status event is the single
+ * source of truth, so we do not emit optimistically: an optimistic value can
+ * fight a newer status event and show the wrong state. */
+export function toggleShuffle(): void {
+  MediaControls.setShuffle(!state.shuffle).catch((error) =>
+    emit({ error: errorMessage(error) }),
+  );
+}
+
+/** Insert tracks into the live queue. 'next' lands right after the current
+ * track; 'end' appends. Skips tracks already queued to avoid duplicates. */
+export async function addToQueue(
+  items: ParsedItem[],
+  placement: 'next' | 'end' = 'end',
+): Promise<void> {
+  const tracks = items.filter((item) => item.videoId).map(trackFromItem);
+  if (!tracks.length) return;
+
+  // Nothing loaded yet: seed playback so the action is not a silent no-op.
+  if (!state.queue.length) {
+    await replaceQueue(tracks, 0);
+    return;
+  }
+
+  const existing = new Set(state.queue.map((track) => track.videoId));
+  const fresh = tracks.filter((track) => !existing.has(track.videoId));
+  if (!fresh.length) return;
+
+  const generation = queueGeneration;
+  try {
+    await setupPlayer();
+    const nativeTracks = await Promise.all(fresh.map(nativeTrack));
+    // Everything below runs in one serialized slot: re-filter, insert natively,
+    // then mirror the result in JS. The index is read here so it matches the
+    // queue as it exists when the native insert actually runs.
+    await serializeMutation(async () => {
+      if (generation !== queueGeneration) return;
+      const queued = new Set(state.queue.map((track) => track.videoId));
+      const pending: PlayerTrack[] = [];
+      const nativePending: NativeTrack[] = [];
+      fresh.forEach((track, i) => {
+        if (queued.has(track.videoId)) return;
+        queued.add(track.videoId);
+        pending.push(track);
+        nativePending.push(nativeTracks[i]);
+      });
+      if (!pending.length) return;
+
+      const insertAt = placement === 'next' ? state.index + 1 : state.queue.length;
+      await MediaControls.insertTracks(nativePending, insertAt);
+      // No generation re-check here: the native insert already happened, so
+      // skipping the JS emit would leave the two queues out of sync.
+      const nextQueue = [...state.queue];
+      nextQueue.splice(insertAt, 0, ...pending);
+      emit({ queue: nextQueue });
+    });
+  } catch (error) {
+    if (generation !== queueGeneration) return;
+    emit({ error: errorMessage(error) });
+  }
+}
+
+/** Convenience for row actions: matches the SongRow onAddToQueue signature. */
+export function addItemToQueue(item: ParsedItem, placement: 'next' | 'end'): void {
+  addToQueue([item], placement).catch(() => {});
 }
 
 export function seekTo(seconds: number): void {
