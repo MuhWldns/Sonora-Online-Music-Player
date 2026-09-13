@@ -1,7 +1,7 @@
 # Android Audio Playback Incident
 
 **Status:** playback startup fixed; native queue and notification controls validated on Android
-**Validated on:** MuMu Player, Android package `com.sonora.music`
+**Validated on:** Android emulator, package `com.sonora.music`
 **Proxy:** configured per operator through local environment or app Settings
 **Primary fix:** `37f652a fix(proxy): bound upstream audio ranges`
 
@@ -11,7 +11,7 @@ Tapping a song used to create the mini-player without producing audio. The app's
 
 The failing boundary was the proxy's `/stream` endpoint. It requested Google Video with an open-ended `Range: bytes=0-`. Google Video intermittently rejected that request with HTTP 403. The proxy converted the rejection to HTTP 502, which Media3 surfaced as a source error.
 
-The deployed fix converts missing or open-ended ranges into a bounded 1 MiB upstream request. The same track then started correctly in MuMu: Media3 entered `PLAYING`, the Android audio track started, and playback position advanced. Production now returns a valid `206 audio/mp4` response for the same request.
+The deployed fix converts missing or open-ended ranges into a bounded 1 MiB upstream request. The same track then started correctly in the emulator: Media3 entered `PLAYING`, the Android audio track started, and playback position advanced. Production now returns a valid `206 audio/mp4` response for the same request.
 
 ## User-visible symptoms
 
@@ -66,7 +66,7 @@ The discrepancy was display/font ambiguity, not string mutation in the data path
 
 ### 3. Direct Google Video playback was not a reliable fix
 
-`/player` returned a deciphered Google Video URL. A bounded curl probe could fetch bytes from MuMu, but Expo Audio still entered `Source error` when given the direct URL. Requests without the required bounded range were rejected.
+`/player` returned a deciphered Google Video URL. A bounded curl probe could fetch bytes from the emulator, but Expo Audio still entered `Source error` when given the direct URL. Requests without the required bounded range were rejected.
 
 That experiment was removed. The mobile app continues to use `/stream`, which keeps IP binding and request-shape handling on the proxy.
 
@@ -121,7 +121,7 @@ Focused Node tests cover all three cases in `packages/proxy/src/stream-range.tes
 - Proxy production build: passing.
 - Mobile TypeScript check: passing.
 
-### Local integration in MuMu
+### Local integration on an Android emulator
 
 The app was pointed to the locally built proxy through ADB reverse. The same `Membasuh` track produced:
 
@@ -190,6 +190,24 @@ This is tracked separately because it belongs to navigation/data handling rather
 **Status:** fixed in 1.2.0.
 
 `state.queue` (JS) and the Media3 queue (native) were mutated in separate steps, so a radio seed and an add-to-queue insert could interleave: a track could appear twice, or remain in the JS queue while never playing. All queue mutations now run in one serialized slot (`serializeMutation`) with the JS emit inside it, so both queues change together. A timing sweep of 108 interleavings showed 18/36 divergences before the fix and 0/108 after.
+
+### F. The queue could only be viewed, not edited
+
+**Status:** fixed in 1.3.0.
+
+The "up next" list was read-only. 1.3.0 adds manual queue editing on top of the
+serialized-mutation foundation from E:
+
+- Reorder upcoming tracks by dragging their handle.
+- Remove an upcoming track with a right swipe.
+- Add a catalog row with *Play next* (inserted immediately after the live
+  current item) or *Add to end* (appended).
+
+The currently playing track is pinned and can be neither moved nor removed, at
+both the JS and native layers. Add-next resolves its insertion point from the
+native current item, so a stale JS index after a backgrounded auto-advance
+cannot misplace the insert. Adding never restarts or replaces the current track.
+See `docs/queue-editor.md` for the index semantics and verification notes.
 
 ## Operational notes
 

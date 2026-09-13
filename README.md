@@ -14,6 +14,7 @@ The proxy runs as a Docker container on a self-hosted Node.js server. Authentica
 - Home feed with your account's personalized recommendations
 - Library & liked songs from your own account (cookie-authenticated)
 - Audio playback with queue/radio (up next) support
+- Editable queue — reorder by drag, swipe to remove, and add next or to the end without interrupting the current track
 - Credentials stored only on your device — server is stateless
 - One-command deployment on a self-hosted Node.js server via Docker
 

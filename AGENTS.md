@@ -81,6 +81,7 @@ Credential yang tertempel di chat atau issue harus dianggap compromised dan sege
 - `/browse` menangani playlist shelf yang nested di `twoColumnBrowseResultsRenderer`.
 - Node proxy memiliki BotGuard/WebPO provider dengan cache token per video dan single-flight minter refresh.
 - Cloudflare Worker belum mengaktifkan provider PO-token Node.
+- Queue editor (1.3.0): reorder drag, swipe hapus, add next/end. Track yang sedang diputar dipin dan tidak bisa dipindah/dihapus; indeks native dan JS dijaga identik. Lihat `docs/queue-editor.md`.
 - APK release dibangun dari `apps/mobile/android` dan sebaiknya disimpan di luar source repository.
 
 ## License
