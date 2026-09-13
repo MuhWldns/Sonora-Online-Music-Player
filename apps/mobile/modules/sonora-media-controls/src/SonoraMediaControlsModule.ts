@@ -27,6 +27,9 @@ declare class SonoraMediaControlsModule extends NativeModule<MediaControlEvents>
   replaceQueue(tracks: NativeTrack[], startIndex: number): Promise<void>;
   appendTracks(tracks: NativeTrack[]): Promise<void>;
   insertTracks(tracks: NativeTrack[], index: number): Promise<void>;
+  insertTracksAfterCurrent(tracks: NativeTrack[]): Promise<number>;
+  moveMediaItem(fromIndex: number, toIndex: number): Promise<void>;
+  removeMediaItem(index: number): Promise<void>;
   setShuffle(enabled: boolean): Promise<void>;
   play(): Promise<void>;
   pause(): Promise<void>;

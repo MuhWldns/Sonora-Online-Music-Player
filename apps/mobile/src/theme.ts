@@ -21,6 +21,9 @@ export interface Palette {
   onAccent: string;
   error: string;
   onSurfaceVariant: string;
+  /** Material error-container role: filled destructive surface (swipe-to-delete). */
+  errorContainer: string;
+  onErrorContainer: string;
 }
 
 export const lightPalette: Palette = {
@@ -35,6 +38,8 @@ export const lightPalette: Palette = {
   onAccent: '#1A1917',
   error: '#B3261E',
   onSurfaceVariant: '#49454F',
+  errorContainer: '#F9DEDC',
+  onErrorContainer: '#410E0B',
 };
 
 export const darkPalette: Palette = {
@@ -49,6 +54,8 @@ export const darkPalette: Palette = {
   onAccent: '#1A1917',
   error: '#F2B8B5',
   onSurfaceVariant: '#CAC4D0',
+  errorContainer: '#8C1D18',
+  onErrorContainer: '#F9DEDC',
 };
 
 export const navLightTheme: Theme = {

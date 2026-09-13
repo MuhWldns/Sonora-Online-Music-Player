@@ -79,6 +79,53 @@ class SonoraMediaControlsModule : Module() {
       }
     }.runOnQueue(Queues.MAIN)
 
+    /**
+     * Insert right after the item that is ACTUALLY playing and return the index
+     * used. JS `state.index` is refreshed by status events, so it can lag the
+     * native current item (backgrounded auto-advance); resolving the position
+     * here from `currentMediaItemIndex` keeps "play next" landing after the
+     * live track and returns the authoritative index so JS can mirror it.
+     */
+    AsyncFunction("insertTracksAfterCurrent") { tracks: List<SonoraTrackRecord> ->
+      val player = requireController()
+      val insertAt = (player.currentMediaItemIndex + 1).coerceIn(0, player.mediaItemCount)
+      player.addMediaItems(insertAt, tracks.map(::mediaItem))
+      insertAt
+    }.runOnQueue(Queues.MAIN)
+
+    /**
+     * Move one media item from [fromIndex] to [toIndex]. Media3 treats
+     * [toIndex] as the destination index AFTER the item is lifted out of the
+     * list (same contract as List.move / Player.moveMediaItem), so a downward
+     * move shifts by one less than the naive array math. Rejects out-of-range
+     * indices instead of silently clamping to an unrelated position.
+     */
+    AsyncFunction("moveMediaItem") { fromIndex: Int, toIndex: Int ->
+      val player = requireController()
+      val last = player.mediaItemCount - 1
+      require(fromIndex in 0..last && toIndex in 0..last) {
+        "moveMediaItem out of range: from=$fromIndex to=$toIndex count=${player.mediaItemCount}"
+      }
+      player.moveMediaItem(fromIndex, toIndex)
+    }.runOnQueue(Queues.MAIN)
+
+    /**
+     * Remove one media item at [index]. The current item is protected: removing
+     * the playing item would silently advance playback, so it is rejected here
+     * as well as in JS. Media3 keeps its shuffle order coherent across the
+     * removal (ShuffleOrder.cloneAndRemove), so this is safe while shuffled.
+     */
+    AsyncFunction("removeMediaItem") { index: Int ->
+      val player = requireController()
+      require(index in 0 until player.mediaItemCount) {
+        "removeMediaItem out of range: index=$index count=${player.mediaItemCount}"
+      }
+      require(index != player.currentMediaItemIndex) {
+        "removeMediaItem refuses the current media item: index=$index"
+      }
+      player.removeMediaItem(index)
+    }.runOnQueue(Queues.MAIN)
+
     AsyncFunction("setShuffle") { enabled: Boolean ->
       requireController().shuffleModeEnabled = enabled
     }.runOnQueue(Queues.MAIN)

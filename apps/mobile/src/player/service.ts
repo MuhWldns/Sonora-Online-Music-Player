@@ -299,12 +299,20 @@ export async function addToQueue(
       });
       if (!pending.length) return;
 
-      const insertAt = placement === 'next' ? state.index + 1 : state.queue.length;
-      await MediaControls.insertTracks(nativePending, insertAt);
+      // "Play next" resolves its position from the LIVE native current item and
+      // returns the index used, so a stale JS index (backgrounded auto-advance)
+      // cannot land the insert in the wrong slot. "Add to end" truly appends.
+      let insertAt: number;
+      if (placement === 'next') {
+        insertAt = await MediaControls.insertTracksAfterCurrent(nativePending);
+      } else {
+        insertAt = state.queue.length;
+        await MediaControls.appendTracks(nativePending);
+      }
       // No generation re-check here: the native insert already happened, so
       // skipping the JS emit would leave the two queues out of sync.
       const nextQueue = [...state.queue];
-      nextQueue.splice(insertAt, 0, ...pending);
+      nextQueue.splice(Math.min(insertAt, nextQueue.length), 0, ...pending);
       emit({ queue: nextQueue });
     });
   } catch (error) {
@@ -316,6 +324,75 @@ export async function addToQueue(
 /** Convenience for row actions: matches the SongRow onAddToQueue signature. */
 export function addItemToQueue(item: ParsedItem, placement: 'next' | 'end'): void {
   addToQueue([item], placement).catch(() => {});
+}
+
+/** Editable region = every absolute index AFTER the current track. The current
+ * track is pinned: it never moves and never disappears, so state.index stays
+ * stable across reorder/removal and JS stays trivially aligned with the native
+ * Media3 timeline. Indices are absolute positions in state.queue. */
+function isEditableIndex(index: number): boolean {
+  return index > state.index && index < state.queue.length;
+}
+
+/** Move one upcoming track to another upcoming position (Media3 semantics:
+ * `toIndex` is the destination AFTER the item is lifted out). The native op
+ * runs first inside the serialized slot and JS mirrors the exact same move only
+ * once it resolves, so a rejected native call leaves both queues untouched.
+ * Returns whether the move was actually applied, letting the sheet snap back. */
+export async function moveQueueItem(fromIndex: number, toIndex: number): Promise<boolean> {
+  if (fromIndex === toIndex) return false;
+  if (!isEditableIndex(fromIndex) || !isEditableIndex(toIndex)) return false;
+
+  const generation = queueGeneration;
+  try {
+    await setupPlayer();
+    let applied = false;
+    await serializeMutation(async () => {
+      if (generation !== queueGeneration) return;
+      // Re-validate against the queue as it exists when the op actually runs.
+      if (fromIndex === toIndex) return;
+      if (!isEditableIndex(fromIndex) || !isEditableIndex(toIndex)) return;
+      await MediaControls.moveMediaItem(fromIndex, toIndex);
+      const nextQueue = [...state.queue];
+      const [moved] = nextQueue.splice(fromIndex, 1);
+      nextQueue.splice(toIndex, 0, moved);
+      emit({ queue: nextQueue });
+      applied = true;
+    });
+    return applied;
+  } catch (error) {
+    if (generation !== queueGeneration) return false;
+    emit({ error: errorMessage(error) });
+    return false;
+  }
+}
+
+/** Remove one upcoming track. The current track is never removable: this guard
+ * and the native module both reject it. Works while shuffle is on because
+ * Media3 keeps its shuffle order coherent across a removal. Returns whether the
+ * removal was applied so the swipe affordance can recover on failure. */
+export async function removeQueueItem(index: number): Promise<boolean> {
+  if (!isEditableIndex(index)) return false;
+
+  const generation = queueGeneration;
+  try {
+    await setupPlayer();
+    let applied = false;
+    await serializeMutation(async () => {
+      if (generation !== queueGeneration) return;
+      if (!isEditableIndex(index)) return;
+      await MediaControls.removeMediaItem(index);
+      const nextQueue = [...state.queue];
+      nextQueue.splice(index, 1);
+      emit({ queue: nextQueue });
+      applied = true;
+    });
+    return applied;
+  } catch (error) {
+    if (generation !== queueGeneration) return false;
+    emit({ error: errorMessage(error) });
+    return false;
+  }
 }
 
 export function seekTo(seconds: number): void {
