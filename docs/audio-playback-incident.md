@@ -1,6 +1,6 @@
 # Android Audio Playback Incident
 
-**Status:** playback startup fixed; native queue and notification controls validated on Android
+**Status:** playback startup fixed; native queue, notification controls, and notification tap-to-open validated on Android
 **Validated on:** Android emulator, package `com.sonora.music`
 **Proxy:** configured per operator through local environment or app Settings
 **Primary fix:** `37f652a fix(proxy): bound upstream audio ranges`
@@ -208,6 +208,31 @@ both the JS and native layers. Add-next resolves its insertion point from the
 native current item, so a stale JS index after a backgrounded auto-advance
 cannot misplace the insert. Adding never restarts or replaces the current track.
 See `docs/queue-editor.md` for the index semantics and verification notes.
+
+### G. Tapping the media notification did not open the app
+
+**Status:** fixed in 1.3.1.
+
+With Sonora backgrounded or its task removed from recents, tapping the media
+notification row did nothing, while the transport buttons (play/pause, next,
+previous) worked. The playback service built its `MediaSession` without calling
+`setSessionActivity(...)`. Media3's default notification provider uses
+`MediaSession.getSessionActivity()` as the notification's content intent, so the
+notification was published with `contentIntent=null`. The transport buttons were
+unaffected because they are built from their own action `PendingIntent`s rather
+than the content intent.
+
+The fix sets a session activity in `SonoraPlaybackService`: a
+`PendingIntent.getActivity(...)` over `packageManager.getLaunchIntentForPackage(packageName)`,
+with `FLAG_ACTIVITY_SINGLE_TOP or FLAG_ACTIVITY_CLEAR_TOP` and
+`FLAG_IMMUTABLE or FLAG_UPDATE_CURRENT`. The launcher component is resolved from
+the package manager so the native module keeps no compile-time dependency on the
+app module.
+
+Verified on device with before/after `dumpsys`: `contentIntent` went from `null`
+to a real `startActivity` `PendingIntent`, and `dumpsys media_session` reported a
+non-null `launchIntent`. A real notification-row tap launched `MainActivity` both
+while the app was backgrounded and after its task had been removed from recents.
 
 ## Operational notes
 
