@@ -6,6 +6,7 @@ import { StatusBar, useColorScheme } from 'react-native';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { setupPlayer } from './src/player/service';
 import { darkPalette, lightPalette, navDarkTheme, navLightTheme } from './src/theme';
+import { UpdateGate } from './src/update/UpdateGate';
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -25,6 +26,7 @@ export default function App() {
       <NavigationContainer theme={dark ? navDarkTheme : navLightTheme}>
         {ready ? <RootNavigator palette={palette} /> : null}
       </NavigationContainer>
+      <UpdateGate palette={palette} enabled={ready} />
     </SafeAreaProvider>
   );
 }

@@ -24,6 +24,8 @@ export interface Palette {
   /** Material error-container role: filled destructive surface (swipe-to-delete). */
   errorContainer: string;
   onErrorContainer: string;
+  /** Modal scrim behind blocking dialogs. */
+  scrim: string;
 }
 
 export const lightPalette: Palette = {
@@ -40,6 +42,7 @@ export const lightPalette: Palette = {
   onSurfaceVariant: '#49454F',
   errorContainer: '#F9DEDC',
   onErrorContainer: '#410E0B',
+  scrim: 'rgba(0,0,0,0.45)',
 };
 
 export const darkPalette: Palette = {
@@ -56,6 +59,7 @@ export const darkPalette: Palette = {
   onSurfaceVariant: '#CAC4D0',
   errorContainer: '#8C1D18',
   onErrorContainer: '#F9DEDC',
+  scrim: 'rgba(0,0,0,0.6)',
 };
 
 export const navLightTheme: Theme = {
