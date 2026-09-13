@@ -83,6 +83,14 @@ Credential yang tertempel di chat atau issue harus dianggap compromised dan sege
 - Cloudflare Worker belum mengaktifkan provider PO-token Node.
 - Queue editor (1.3.0): reorder drag, swipe hapus, add next/end. Track yang sedang diputar dipin dan tidak bisa dipindah/dihapus; indeks native dan JS dijaga identik. Lihat `docs/queue-editor.md`.
 - APK release dibangun dari `apps/mobile/android` dan sebaiknya disimpan di luar source repository.
+- Pemeriksaan pembaruan (in-app): `apps/mobile/src/update/` membaca GitHub Releases API publik
+  (`releases/latest`) di cold start + saat app kembali foreground, di-throttle 6 jam, gagal/offline
+  senyap. Versi terpasang dari `Constants.expoConfig.version`; prompt maksimum sekali per sesi.
+  Tidak pernah lewat proxy dan tidak pernah memuat cookie; tidak ada permission baru dan tidak ada
+  auto-install — aksi update hanya membuka halaman rilis di browser. Prompt hanya menampilkan nomor
+  versi; body rilis tidak pernah dirender di app. Untuk memicu prompt otomatis, rilis GitHub harus
+  **bukan draft dan bukan prerelease**, tag `vX.Y.Z` yang cocok dengan `app.json` `version`, dan
+  `versionName`/`versionCode` Android dinaikkan bersamaan.
 
 ## License
 
