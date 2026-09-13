@@ -1,5 +1,7 @@
 package com.sonora.music.mediacontrols
 
+import android.app.PendingIntent
+import android.content.Intent
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.Player
@@ -31,9 +33,27 @@ class SonoraPlaybackService : MediaSessionService() {
         .setSlots(CommandButton.SLOT_FORWARD)
         .build(),
     )
-    mediaSession = MediaSession.Builder(this, player)
+    val sessionBuilder = MediaSession.Builder(this, player)
       .setMediaButtonPreferences(mediaButtons)
-      .build()
+    buildSessionActivityPendingIntent()?.let { sessionBuilder.setSessionActivity(it) }
+    mediaSession = sessionBuilder.build()
+  }
+
+  /**
+   * Builds the PendingIntent used as the notification's content intent so that tapping the
+   * media notification brings the app back to the foreground. Resolves the launcher activity
+   * from the package manager to avoid a compile-time dependency on the app module.
+   */
+  private fun buildSessionActivityPendingIntent(): PendingIntent? {
+    val launchIntent = packageManager.getLaunchIntentForPackage(packageName)
+      ?.apply { addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP) }
+      ?: return null
+    return PendingIntent.getActivity(
+      this,
+      /* requestCode = */ 1,
+      launchIntent,
+      PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
   }
 
   override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
