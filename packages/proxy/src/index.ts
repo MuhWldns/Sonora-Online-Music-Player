@@ -111,6 +111,25 @@ export function createApp(deps: AppDeps): Hono {
     return c.json({ sections: parseSections(sl?.contents ?? []) });
   });
 
+  app.get('/history', async (c) => {
+    const cookie = cookieOf(c);
+    if (!cookie)
+      return c.json({ error: 'login required (send x-yt-cookie header)' }, 401);
+
+    const cacheKey = `history:${scopeOf(cookie)}`;
+    const cached = await deps.cache.get<unknown>(cacheKey);
+    if (cached) return c.json(cached);
+
+    const yt = await getDataInnertube(deps, cookie);
+    const data = await rawExecute(yt, '/browse', {
+      browseId: 'FEmusic_history',
+    });
+    const sl = findFirst<{ contents?: never[] }>(data, 'sectionListRenderer');
+    const json = { sections: parseSections(sl?.contents ?? []) };
+    await deps.cache.set(cacheKey, json, 60_000);
+    return c.json(json);
+  });
+
   app.get('/browse', async (c) => {
     const id = c.req.query('id')?.trim();
     if (!id) return c.json({ error: 'missing id' }, 400);
@@ -151,6 +170,30 @@ export function createApp(deps: AppDeps): Hono {
         watchEndpointMusicConfig: { musicVideoType: 'MUSIC_VIDEO_TYPE_ATV' },
       },
     });
+    const queue = findAll<Record<string, never>>(data, 'playlistPanelVideoRenderer').map(
+      (p) => parsePanelItem(p),
+    );
+    // InnerTube embeds a continuation token (for paging the automix past the
+    // first ~25 items) under one of two renderers depending on layout. Prefer
+    // musicShelfContinuation (modern); fall back to the generic continuation
+    // item's watch/playlist endpoint.
+    const shelfCont = findFirst<{
+      contents?: { musicShelfContinuation?: { token?: string } }[];
+    }>(data, 'musicShelfRenderer');
+    const token =
+      shelfCont?.contents?.[0]?.musicShelfContinuation?.token ??
+      findFirst<{ token?: string }>(data, 'musicShelfContinuation')?.token ??
+      findFirst<{
+        endpoint?: { continuationCommand?: { token?: string } };
+      }>(data, 'continuationItemRenderer')?.endpoint?.continuationCommand?.token;
+    return c.json({ queue, continuation: token });
+  });
+
+  app.get('/next/continue', async (c) => {
+    const token = c.req.query('token')?.trim();
+    if (!token) return c.json({ error: 'missing token' }, 400);
+    const yt = await getDataInnertube(deps, cookieOf(c));
+    const data = await rawExecute(yt, '/next', { continuation: token });
     const queue = findAll<Record<string, never>>(data, 'playlistPanelVideoRenderer').map(
       (p) => parsePanelItem(p),
     );
