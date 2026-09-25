@@ -19,6 +19,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon, IconButton } from '../components/Icon';
 import { ShelfCard, SongRow } from '../components/TrackRow';
+import { SearchTopResultCard } from '../components/SearchTopResultCard';
 import { search } from '../api/client';
 import type { ParsedItem, ParsedSection } from '../api/types';
 import { browseTargetOf } from '../navigation/browseTarget';
@@ -88,11 +89,20 @@ export function SearchScreen({ palette }: { palette: Palette }) {
   );
 
   const results: ParsedItem[] = [];
-  for (const s of sections ?? [])
+  let topResult: ParsedItem | null = null;
+  for (const s of sections ?? []) {
+    if (!topResult && s.title === 'Top result' && s.items.length) {
+      // Hoist the top result into its own hero slot above the list. Drop it
+      // from the rest of the feed so the song does not appear twice (once in
+      // the hero and once in the song list).
+      topResult = s.items[0];
+      continue;
+    }
     for (const it of s.items) if (it.type === 'song' || it.type === 'video') results.push(it);
-  const others: ParsedSection[] = (sections ?? []).filter(
-    (s) => s.items.length && s.items[0].type !== 'song' && s.items[0].type !== 'video',
-  );
+  }
+  const others: ParsedSection[] = (sections ?? [])
+    .filter((s) => !(s.title === 'Top result' && s.items.length))
+    .filter((s) => s.items.length && s.items[0].type !== 'song' && s.items[0].type !== 'video');
 
   return (
     <View style={[styles.root, { backgroundColor: palette.background }]}>
@@ -188,20 +198,27 @@ export function SearchScreen({ palette }: { palette: Palette }) {
             />
           )}
           ListHeaderComponent={
-            others.length ? (
-              <View style={{ gap: spacing.md }}>
-                {others.slice(0, 2).map((s, si) => (
-                  <View key={`${s.title}-${si}`}>
-                    <Text style={[styles.othersTitle, { color: palette.text }]}>
-                      {s.title}
-                    </Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.shelfContent}>
-                      {s.items.map((it, i) => (
-                        <ShelfCard key={`${it.title}-${i}`} item={it} onOpen={onOpen} palette={palette} />
-                      ))}
-                    </ScrollView>
+            topResult || others.length ? (
+              <View>
+                {topResult ? (
+                  <SearchTopResultCard item={topResult} onOpen={onOpen} palette={palette} />
+                ) : null}
+                {others.length ? (
+                  <View style={{ gap: spacing.md }}>
+                    {others.slice(0, 2).map((s, si) => (
+                      <View key={`${s.title}-${si}`}>
+                        <Text style={[styles.othersTitle, { color: palette.text }]}>
+                          {s.title}
+                        </Text>
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.shelfContent}>
+                          {s.items.map((it, i) => (
+                            <ShelfCard key={`${it.title}-${i}`} item={it} onOpen={onOpen} palette={palette} />
+                          ))}
+                        </ScrollView>
+                      </View>
+                    ))}
                   </View>
-                ))}
+                ) : null}
               </View>
             ) : null
           }

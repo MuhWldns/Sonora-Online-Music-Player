@@ -1,4 +1,4 @@
-/** Native queue-backed playback service. Android owns playback, MediaSession,
+ /** Native queue-backed playback service. Android owns playback, MediaSession,
  * queue advancement, and notification controls even while JS is backgrounded. */
 import MediaControls from '../../modules/sonora-media-controls/src/SonoraMediaControlsModule';
 import type {
@@ -6,8 +6,9 @@ import type {
   PlaybackStatus,
 } from '../../modules/sonora-media-controls/src/SonoraMediaControlsModule';
 
-import { next, streamUrl } from '../api/client';
+import { next, nextContinue as nextContinueApi, streamUrl } from '../api/client';
 import type { ParsedItem, QueueItem } from '../api/types';
+import { recordPlayed } from '../storage/recentlyPlayed';
 
 export interface PlayerTrack {
   videoId: string;
@@ -43,6 +44,21 @@ const listeners = new Set<() => void>();
 let setupPromise: Promise<void> | null = null;
 let queueGeneration = 0;
 let lastStatus = 'no status events yet';
+let lastRecordedVideoId: string | null = null;
+
+/** Continuation paging for /next. Each call to /next seeds the queue and
+ *  stashes a token; /next/continue pages the same automix past the first
+ *  ~25 items. A new /next (playSong) replaces the token with a fresh seed.
+ *
+ *  The throttle prevents spam when the user advances quickly through a
+ *  short tail. MIN_CONTINUE_INTERVAL_MS matches the cadence YTM client
+ *  uses internally; tight enough to refill, loose enough to avoid the
+ *  continuation endpoint rejecting rapid requests. */
+const MIN_CONTINUE_INTERVAL_MS = 4000;
+const CONTINUE_THRESHOLD = 5;
+const MAX_QUEUE = 100;
+let nextContinuationToken: string | null = null;
+let lastNextContinueAt = 0;
 
 function emit(patch: Partial<PlayerState>): void {
   state = { ...state, ...patch };
@@ -68,6 +84,39 @@ function onStatus(status: PlaybackStatus): void {
     shuffle: status.shuffle,
     error: status.error ?? null,
   });
+
+  // Record the track as recently-played the first time the native player
+  // reports `playing` for it. Skips buffering/error/initial-prep states and
+  // skips duplicate events for the same track (e.g. pause/resume, scrub).
+  if (
+    status.playing &&
+    !status.buffering &&
+    !status.error &&
+    track &&
+    track.videoId !== lastRecordedVideoId
+  ) {
+    lastRecordedVideoId = track.videoId;
+    void recordPlayed({
+      videoId: track.videoId,
+      title: track.title,
+      artist: track.artist,
+      thumbnail: track.thumbnail,
+      playedAt: Date.now(),
+    });
+  }
+
+  // Auto-page the automix when the upcoming tail runs low. The trigger is
+  // the residual queue AFTER the current track, not the raw queue length;
+  // we only care how many tracks remain until the user runs out. We use the
+  // post-emit state so the threshold reflects what listeners see.
+  if (
+    state.queue.length > 0 &&
+    state.index >= 0 &&
+    state.queue.length - state.index - 1 <= CONTINUE_THRESHOLD &&
+    nextContinuationToken !== null
+  ) {
+    void nextContinue();
+  }
 }
 
 export function subscribe(listener: () => void): () => void {
@@ -224,8 +273,70 @@ export async function playSong(item: ParsedItem): Promise<void> {
       emit({ queue: [...state.queue, ...freshTracks] });
       await MediaControls.appendTracks(freshNative);
     });
+    // Stash the continuation token so onStatus can page more tracks when
+    // the tail runs low. A new playSong replaces this with the new seed's
+    // token; never both at once because playSong awaits replaceQueue first
+    // (queueGeneration bump) before /next fires.
+    if (generation === queueGeneration) {
+      nextContinuationToken = result.continuation ?? null;
+      lastNextContinueAt = Date.now();
+    }
   } catch {
     // Radio seeding is optional; the selected track remains playable.
+  }
+}
+
+/** Page the current automix past its tail using the stashed continuation
+ *  token. Throttled, capped, dedup'd — same shape as the radio-seed append
+ *  in playSong but keyed on the cached token instead of a fresh /next.
+ *
+ *  No-ops (silently) when: no token, queue already at cap, throttle window
+ *  not yet elapsed, or a queue mutation is in flight (serializeMutation
+ *  guarantees serialization regardless). */
+export async function nextContinue(): Promise<void> {
+  if (!nextContinuationToken) return;
+  if (Date.now() - lastNextContinueAt < MIN_CONTINUE_INTERVAL_MS) return;
+  if (state.queue.length >= MAX_QUEUE) return;
+
+  const token = nextContinuationToken;
+  const generation = queueGeneration;
+  lastNextContinueAt = Date.now();
+
+  try {
+    const result = await nextContinueApi(token);
+    if (generation !== queueGeneration) return;
+
+    const candidates = result.queue
+      .filter((queued) => !queued.selected)
+      .map(trackFromQueueItem);
+    if (!candidates.length) return;
+
+    const resolved = await Promise.all(candidates.map(nativeTrack));
+    if (generation !== queueGeneration) return;
+
+    await serializeMutation(async () => {
+      if (generation !== queueGeneration) return;
+      const existing = new Set(state.queue.map((track) => track.videoId));
+      const freshTracks: PlayerTrack[] = [];
+      const freshNative: NativeTrack[] = [];
+      const slotsLeft = MAX_QUEUE - state.queue.length;
+      candidates.forEach((track, i) => {
+        if (existing.has(track.videoId)) return;
+        existing.add(track.videoId);
+        if (freshTracks.length >= slotsLeft) return; // honor hard cap
+        freshTracks.push(track);
+        freshNative.push(resolved[i]);
+      });
+      if (!freshTracks.length) return;
+
+      emit({ queue: [...state.queue, ...freshTracks] });
+      await MediaControls.appendTracks(freshNative);
+    });
+    // YTM continuation tokens are single-use; once consumed, drop it so
+    // we don't re-fire the same page. A future /next (new seed) replaces it.
+    if (generation === queueGeneration) nextContinuationToken = null;
+  } catch {
+    // Auto-paging is best-effort; queue keeps playing what it has.
   }
 }
 

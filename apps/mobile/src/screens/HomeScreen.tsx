@@ -21,6 +21,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon, SectionHeader } from '../components/Icon';
 import { ShelfCard, SongRow } from '../components/TrackRow';
+import { HomeRecentlyPlayedRow } from '../components/home/HomeRecentlyPlayedRow';
+import { HomeMixForYouRow } from '../components/home/HomeMixForYouRow';
+import { HomeQuickPicksGrid } from '../components/home/HomeQuickPicksGrid';
 import { home } from '../api/client';
 import type { ParsedItem, ParsedSection } from '../api/types';
 import { usePlayerState } from '../player/usePlayerState';
@@ -31,12 +34,11 @@ import { spacing, typeScale } from '../theme';
 import type { Palette } from '../theme';
 
 type Row =
-  | { kind: 'header' }
   | { kind: 'shelf'; section: ParsedSection }
   | { kind: 'songs'; section: ParsedSection };
 
 function toRows(sections: ParsedSection[]): Row[] {
-  const rows: Row[] = [{ kind: 'header' }];
+  const rows: Row[] = [];
   for (const section of sections) {
     if (!section.items.length) continue;
     // Song-ish lists render vertically; other types become a horizontal shelf.
@@ -109,12 +111,6 @@ export function HomeScreen({ palette }: { palette: Palette }) {
   const rows = toRows(sections ?? []);
 
   const renderItem = ({ item }: ListRenderItemInfo<Row>) => {
-    if (item.kind === 'header')
-      return (
-        <View style={[styles.header, { paddingTop: insets.top + spacing.lg }]}>
-          <Text style={[styles.greeting, { color: palette.text }]}>Sonora</Text>
-        </View>
-      );
     if (item.kind === 'shelf')
       return (
         <View style={styles.shelfBlock}>
@@ -152,6 +148,16 @@ export function HomeScreen({ palette }: { palette: Palette }) {
       data={rows}
       keyExtractor={(row, i) => (row.kind === 'shelf' || row.kind === 'songs' ? `${row.section.title}-${i}` : 'header')}
       renderItem={renderItem}
+      ListHeaderComponent={
+        <View>
+          <View style={[styles.header, { paddingTop: insets.top + spacing.lg }]}>
+            <Text style={[styles.greeting, { color: palette.text }]}>Sonora</Text>
+          </View>
+          <HomeRecentlyPlayedRow palette={palette} />
+          <HomeMixForYouRow palette={palette} />
+          <HomeQuickPicksGrid palette={palette} />
+        </View>
+      }
       contentContainerStyle={{ paddingBottom: 180 }}
       refreshControl={
         <RefreshControl
