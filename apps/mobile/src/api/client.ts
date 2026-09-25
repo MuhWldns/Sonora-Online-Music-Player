@@ -9,7 +9,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Keychain from 'react-native-keychain';
 
-import type { BrowseResponse, HomeResponse, NextResponse, PlayerResponse, SearchResponse } from './types';
+import type { BrowseResponse, HistoryResponse, HomeResponse, NextResponse, PlayerResponse, SearchResponse } from './types';
 
 const configuredProxyBase = process.env.EXPO_PUBLIC_PROXY_BASE;
 export const DEFAULT_PROXY_BASE =
@@ -70,9 +70,14 @@ export const search = (q: string, filter?: string) =>
 
 export const home = () => api<HomeResponse>('/home');
 
+export const history = () => api<HistoryResponse>('/history');
+
 export const browse = (id: string) => api<BrowseResponse>('/browse', { id });
 
 export const next = (videoId: string) => api<NextResponse>('/next', { videoId });
+
+export const nextContinue = (token: string) =>
+  api<NextResponse>('/next/continue', { token });
 
 export const player = (videoId: string) => api<PlayerResponse>('/player', { videoId });
 

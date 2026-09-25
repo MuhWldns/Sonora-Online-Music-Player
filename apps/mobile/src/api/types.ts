@@ -37,6 +37,10 @@ export interface HomeResponse {
   sections: ParsedSection[];
 }
 
+export interface HistoryResponse {
+  sections: ParsedSection[];
+}
+
 export interface BrowseResponse {
   sections: ParsedSection[];
 }
@@ -52,6 +56,9 @@ export interface QueueItem {
 
 export interface NextResponse {
   queue: QueueItem[];
+  /** Token for paging the automix past the first ~25 items. Undefined when
+   *  YTM does not return one (queue shorter than a page). */
+  continuation?: string;
 }
 
 export interface PlayerResponse {
