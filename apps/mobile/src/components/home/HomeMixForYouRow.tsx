@@ -81,13 +81,14 @@ export function HomeMixForYouRow({ palette }: { palette: Palette }) {
 
   const onOpen = useCallback(
     (item: ParsedItem) => {
-      // automix RDAMVM ids cannot be browsed — extract videoId and play directly
-      if (item.playlistId && !item.browseId) {
+      // Local automix only: RDAMVM{videoId} cannot be browsed, play directly.
+      if (item.playlistId?.startsWith('RDAMVM') && !item.browseId) {
         const rdMatch = item.playlistId.match(/^RDAMVM(.{11})$/);
         const videoId = rdMatch ? rdMatch[1] : item.videoId;
         if (videoId) playSong({ ...item, videoId }).catch(() => {});
         return;
       }
+      // Server mixes (playlistId and/or browseId) open as a Browse page.
       const id = item.browseId ?? item.playlistId;
       if (id) navigation.navigate('Browse', { id, title: item.title });
     },

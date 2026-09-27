@@ -218,9 +218,9 @@ function UpcomingRow({
         },
       ]}
     >
-      <View
+      <Animated.View
         pointerEvents="none"
-        style={[styles.qDeleteBg, { backgroundColor: palette.errorContainer }]}
+        style={[styles.qDeleteBg, { backgroundColor: palette.errorContainer, opacity: deleteOpacity }]}
       >
         <Animated.View
           style={[
@@ -231,7 +231,7 @@ function UpcomingRow({
           <Icon name="delete-outline" size={22} color={palette.onErrorContainer} />
           <Text style={[styles.qDeleteLabel, { color: palette.onErrorContainer }]}>Hapus</Text>
         </Animated.View>
-      </View>
+      </Animated.View>
 
       <Animated.View
         {...swipe.panHandlers}
