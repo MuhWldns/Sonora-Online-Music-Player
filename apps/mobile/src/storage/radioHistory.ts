@@ -76,13 +76,10 @@ export async function recordRadioRecommendations(
   seed: string,
   videoIds: readonly string[],
   updatedAt = Date.now(),
-  isCurrent: () => boolean = () => true,
 ): Promise<void> {
-  if (!seed || videoIds.length === 0 || !isCurrent()) return;
+  if (!seed || videoIds.length === 0) return;
   writeChain = writeChain.then(async () => {
-    if (!isCurrent()) return;
     const history = await ensureLoaded();
-    if (!isCurrent()) return;
     const next = rememberRadioRecommendations(history, seed, videoIds, updatedAt);
     cache = next;
     try {

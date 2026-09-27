@@ -71,6 +71,7 @@ let nextRequestInFlightGeneration: number | null = null;
 let radioSeedInFlightGeneration: number | null = null;
 let filteredContinuationCount = 0;
 let radioHistoryResetSeed: string | null = null;
+let radioFreshAppendCount = 0;
 function resetContinuationState(): void {
   nextContinuationToken = null;
   continuationSeed = null;
@@ -81,6 +82,7 @@ function resetContinuationState(): void {
   radioSeedInFlightGeneration = null;
   filteredContinuationCount = 0;
   radioHistoryResetSeed = null;
+  radioFreshAppendCount = 0;
 }
 function syncReseedActive(): string | null {
   const activeVideoId = state.index >= 0 ? state.queue[state.index]?.videoId ?? null : null;
@@ -291,6 +293,7 @@ async function appendRadioQueue(
     if (generation !== queueGeneration) return empty;
   }
   const appendIds = new Set(decision.appendIds.slice(0, MAX_QUEUE - state.queue.length));
+
   const toResolve = candidates.filter((candidate) => appendIds.has(candidate.videoId));
   if (!toResolve.length) {
     return {
@@ -332,6 +335,8 @@ async function appendRadioQueue(
     // not emit or remember rows that no longer belong to this generation.
     if (generation !== queueGeneration) return empty;
     emit({ queue: [...state.queue, ...freshTracks] });
+    radioFreshAppendCount += freshTracks.length;
+
     return {
       count: freshTracks.length,
       historyFiltered: decision.historyFiltered,
@@ -339,12 +344,14 @@ async function appendRadioQueue(
       appendedIds: freshTracks.map((track) => track.videoId),
     };
   }).then((appended) => {
-    if (appended.count > 0 && generation === queueGeneration) {
+    // The native append and JS queue mirror have both succeeded at this point.
+    // Persist those earned IDs even if another playSong has since advanced the
+    // queue generation; generation guards belong before commit, not after it.
+    if (appended.count > 0) {
       void recordRadioRecommendations(
         seed,
         appended.appendedIds,
         Date.now(),
-        () => generation === queueGeneration,
       );
     }
     return appended;
@@ -380,7 +387,10 @@ export async function playSong(item: ParsedItem): Promise<void> {
       getRadioHistoryIds(item.videoId),
     ]);
     if (generation !== queueGeneration) return;
-    const allowReset = !result.continuation && radioHistoryResetSeed !== item.videoId;
+    const allowReset =
+      radioFreshAppendCount === 0 &&
+      !result.continuation &&
+      radioHistoryResetSeed !== item.videoId;
     const appended = await appendRadioQueue(
       result,
       generation,
@@ -455,8 +465,9 @@ export async function nextContinue(): Promise<void> {
       generation,
       effectiveSeed,
       rememberedIds,
+      radioFreshAppendCount === 0 &&
       radioHistoryResetSeed !== effectiveSeed &&
-        (!result.continuation || filteredContinuationCount >= MAX_FILTERED_CONTINUATIONS - 1),
+      (!result.continuation || filteredContinuationCount >= MAX_FILTERED_CONTINUATIONS - 1),
     );
     if (generation !== queueGeneration) return;
     if (appended.reset) radioHistoryResetSeed = effectiveSeed;
