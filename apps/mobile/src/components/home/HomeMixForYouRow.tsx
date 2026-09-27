@@ -113,5 +113,5 @@ export function HomeMixForYouRow({ palette }: { palette: Palette }) {
 
 const styles = StyleSheet.create({
   block: { marginTop: spacing.lg },
-  row: { paddingHorizontal: spacing.lg },
+  row: { paddingHorizontal: spacing.lg, gap: spacing.md },
 });
