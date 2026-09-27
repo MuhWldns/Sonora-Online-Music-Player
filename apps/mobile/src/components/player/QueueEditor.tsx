@@ -218,14 +218,11 @@ function UpcomingRow({
         },
       ]}
     >
-      <Animated.View
-        pointerEvents="none"
-        style={[styles.qDeleteBg, { backgroundColor: palette.errorContainer, opacity: deleteOpacity }]}
-      >
+      <Animated.View pointerEvents="none" style={[styles.qDeleteBg, { opacity: deleteOpacity }]}>
         <Animated.View
           style={[
-            styles.qDeleteInner,
-            { opacity: deleteOpacity, transform: [{ scale: deleteScale }] },
+            styles.qDeletePill,
+            { backgroundColor: palette.errorContainer, transform: [{ scale: deleteScale }] },
           ]}
         >
           <Icon name="delete-outline" size={22} color={palette.onErrorContainer} />
@@ -576,26 +573,32 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 0,
     left: 0,
-    width: SWIPE_REVEAL,
     bottom: 0,
-    // The row slides right, so the revealed strip is the LEFT edge.
+    // The row slides right, so the revealed action sits at the LEFT edge.
     alignItems: 'flex-start',
     justifyContent: 'center',
-    borderRadius: radius.sm,
+    paddingLeft: spacing.lg,
   },
-  qDeleteInner: {
+  qDeletePill: {
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    width: SWIPE_REVEAL,
-    height: '100%',
-    gap: 2,
+    height: 40,
+    paddingHorizontal: spacing.md,
+    gap: spacing.xs,
+    borderRadius: radius.full,
   },
-  qDeleteLabel: { fontSize: typeScale.small, fontWeight: '700' },
+  qDeleteLabel: { fontSize: typeScale.label, fontWeight: '700' },
   qRow: {
     flexDirection: 'row',
     alignItems: 'center',
     height: QUEUE_ROW_HEIGHT,
+    marginHorizontal: spacing.sm,
+    paddingLeft: spacing.xs,
     paddingRight: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: glass.border,
   },
   qHandle: {
     width: TOUCH_TARGET,
@@ -621,7 +624,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     minHeight: QUEUE_ROW_HEIGHT,
   },
-  qThumb: { width: 44, height: 44, borderRadius: 4 },
+  qThumb: { width: 44, height: 44, borderRadius: 8 },
   qMeta: { flex: 1, gap: 2 },
   qTitle: { fontSize: typeScale.body, fontWeight: '600' },
   qSub: { fontSize: typeScale.label },
