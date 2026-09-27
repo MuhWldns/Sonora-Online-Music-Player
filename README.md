@@ -49,7 +49,11 @@ The proxy runs as a Docker container on a self-hosted Node.js server. Authentica
 Account cookie is passed per-request via the `x-yt-cookie` header and is never stored server-side.
 Radio recommendations remain in YouTube Music's algorithmic order. The client
 chains continuation pages, deduplicates by video ID, and caps its live queue at
-100 tracks. If a continuation is missing or expires near the tail, it performs
+100 tracks. It also keeps a bounded local per-seed history of appended video IDs
+to provide best-effort replay rotation across starts; this is not guaranteed
+diversity and does not locally shuffle recommendations. If a seed's available
+history is exhausted, its history may be reset once so playback can reuse the
+current upstream response. If a continuation is missing or expires near the tail, it performs
 one guarded reseed from the active track; it does not locally shuffle or mix
 multiple seeds, and no recommendation diversity is guaranteed.
 

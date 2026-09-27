@@ -8,8 +8,13 @@ import type {
 
 import { next, nextContinue as nextContinueApi, streamUrl } from '../api/client';
 import type { NextResponse, ParsedItem, QueueItem } from '../api/types';
+import {
+  getRadioHistoryIds,
+  recordRadioRecommendations,
+  resetRadioHistory,
+} from '../storage/radioHistory';
+import { decideRadioRecommendations } from '../storage/radioHistoryPolicy';
 import { recordPlayed } from '../storage/recentlyPlayed';
-
 export interface PlayerTrack {
   videoId: string;
   title: string;
@@ -56,20 +61,26 @@ let lastRecordedVideoId: string | null = null;
 const MIN_CONTINUE_INTERVAL_MS = 4000;
 const CONTINUE_THRESHOLD = 5;
 const MAX_QUEUE = 100;
+const MAX_FILTERED_CONTINUATIONS = 3;
 let nextContinuationToken: string | null = null;
+let continuationSeed: string | null = null;
 let lastNextContinueAt = 0;
 let reseedAttemptVideoId: string | null = null;
 let reseedActiveVideoId: string | null = null;
 let nextRequestInFlightGeneration: number | null = null;
 let radioSeedInFlightGeneration: number | null = null;
-
+let filteredContinuationCount = 0;
+let radioHistoryResetSeed: string | null = null;
 function resetContinuationState(): void {
   nextContinuationToken = null;
+  continuationSeed = null;
   lastNextContinueAt = 0;
   reseedAttemptVideoId = null;
   reseedActiveVideoId = null;
   nextRequestInFlightGeneration = null;
   radioSeedInFlightGeneration = null;
+  filteredContinuationCount = 0;
+  radioHistoryResetSeed = null;
 }
 function syncReseedActive(): string | null {
   const activeVideoId = state.index >= 0 ? state.queue[state.index]?.videoId ?? null : null;
@@ -78,7 +89,6 @@ function syncReseedActive(): string | null {
     reseedAttemptVideoId = null;
   }
   return activeVideoId;
-
 }
 function emit(patch: Partial<PlayerState>): void {
   state = { ...state, ...patch };
@@ -186,7 +196,7 @@ function serializeMutation<T>(op: () => Promise<T>): Promise<T> {
   return run;
 }
 
-async function replaceQueue(queue: PlayerTrack[], startIndex: number): Promise<void> {
+async function replaceQueue(queue: PlayerTrack[], startIndex: number): Promise<number> {
   const pendingRadioSeed = radioSeedInFlightGeneration === queueGeneration + 1;
   const boundedQueue = queue.slice(0, MAX_QUEUE);
   const boundedStart = Math.max(0, Math.min(startIndex, boundedQueue.length - 1));
@@ -213,9 +223,10 @@ async function replaceQueue(queue: PlayerTrack[], startIndex: number): Promise<v
       await MediaControls.replaceQueue(tracks, boundedStart);
     });
   } catch (error) {
-    if (generation !== queueGeneration) return;
+    if (generation !== queueGeneration) return generation;
     emit({ playing: false, buffering: false, error: errorMessage(error) });
   }
+  return generation;
 }
 
 export function togglePlay(): void {
@@ -251,47 +262,99 @@ function trackFromQueueItem(item: QueueItem): PlayerTrack {
   };
 }
 
+interface RadioAppendResult {
+  count: number;
+  historyFiltered: boolean;
+  reset: boolean;
+  appendedIds: string[];
+}
+
 async function appendRadioQueue(
   result: Pick<NextResponse, 'queue'>,
   generation: number,
-): Promise<number> {
-  if (generation !== queueGeneration || state.queue.length >= MAX_QUEUE) return 0;
-  const candidates = result.queue
-    .filter((queued) => !queued.selected)
-    .map(trackFromQueueItem);
-  const slots = MAX_QUEUE - state.queue.length;
-  if (!candidates.length || slots <= 0) return 0;
+  seed: string,
+  rememberedIds: ReadonlySet<string>,
+  allowReset: boolean,
+): Promise<RadioAppendResult> {
+  const empty: RadioAppendResult = { count: 0, historyFiltered: false, reset: false, appendedIds: [] };
+  if (generation !== queueGeneration || state.queue.length >= MAX_QUEUE) return empty;
+
+  const candidates = result.queue.filter((queued) => !queued.selected);
+  const decision = decideRadioRecommendations(
+    candidates.map((queued) => queued.videoId),
+    new Set(state.queue.map((track) => track.videoId)),
+    rememberedIds,
+    allowReset,
+  );
+  if (decision.reset) {
+    await resetRadioHistory(seed, () => generation === queueGeneration);
+    if (generation !== queueGeneration) return empty;
+  }
+  const appendIds = new Set(decision.appendIds.slice(0, MAX_QUEUE - state.queue.length));
+  const toResolve = candidates.filter((candidate) => appendIds.has(candidate.videoId));
+  if (!toResolve.length) {
+    return {
+      count: 0,
+      historyFiltered: decision.historyFiltered,
+      reset: decision.reset,
+      appendedIds: [],
+    };
+  }
 
   // Resolve all upstream candidates, then dedupe inside the serialized slot.
-  // Slicing before dedupe could spend the cap on rows already in the queue and
-  // discard later unseen rows that preserve YTM order.
-  const toResolve = candidates;
-  const resolved = await Promise.all(toResolve.map(nativeTrack));
-  if (generation !== queueGeneration) return 0;
+  // Filtering before resolution avoids fetching discarded recommendations.
+  const tracks = toResolve.map(trackFromQueueItem);
+  const resolved = await Promise.all(tracks.map(nativeTrack));
+  if (generation !== queueGeneration) return empty;
 
   return serializeMutation(async () => {
-    if (generation !== queueGeneration) return 0;
+    if (generation !== queueGeneration) return empty;
     const existing = new Set(state.queue.map((track) => track.videoId));
     const freshTracks: PlayerTrack[] = [];
     const freshNative: NativeTrack[] = [];
     const slotsLeft = MAX_QUEUE - state.queue.length;
-    toResolve.forEach((track, i) => {
+    tracks.forEach((track, i) => {
       if (existing.has(track.videoId) || freshTracks.length >= slotsLeft) return;
       existing.add(track.videoId);
       freshTracks.push(track);
       freshNative.push(resolved[i]);
     });
-    if (!freshTracks.length) return 0;
-
+    if (!freshTracks.length) {
+      return {
+        count: 0,
+        historyFiltered: decision.historyFiltered,
+        reset: decision.reset,
+        appendedIds: [],
+      };
+    }
     await MediaControls.appendTracks(freshNative);
+    // A playSong can replace the queue while native append is in flight. Do
+    // not emit or remember rows that no longer belong to this generation.
+    if (generation !== queueGeneration) return empty;
     emit({ queue: [...state.queue, ...freshTracks] });
-    return freshTracks.length;
+    return {
+      count: freshTracks.length,
+      historyFiltered: decision.historyFiltered,
+      reset: decision.reset,
+      appendedIds: freshTracks.map((track) => track.videoId),
+    };
+  }).then((appended) => {
+    if (appended.count > 0 && generation === queueGeneration) {
+      void recordRadioRecommendations(
+        seed,
+        appended.appendedIds,
+        Date.now(),
+        () => generation === queueGeneration,
+      );
+    }
+    return appended;
   });
 }
 
-function setContinuation(result: NextResponse, generation: number): void {
+function setContinuation(result: NextResponse, generation: number, seed: string): void {
   if (generation !== queueGeneration) return;
   nextContinuationToken = result.continuation ?? null;
+  continuationSeed = result.continuation ? seed : null;
   // A fresh token is useful progress even if this page had no new rows.
   if (result.continuation) reseedAttemptVideoId = null;
 }
@@ -304,18 +367,41 @@ export async function playSong(item: ParsedItem): Promise<void> {
   // await, so mark the upcoming generation before native setup can emit a
   // low-tail status event.
   radioSeedInFlightGeneration = queueGeneration + 1;
-  await replaceQueue([first], 0);
-  const generation = queueGeneration;
+  const generationPromise = replaceQueue([first], 0);
+  const generation = await generationPromise;
+  if (generation !== queueGeneration) return;
   radioSeedInFlightGeneration = generation;
 
   try {
-    const result = await next(item.videoId);
+    // The history read may overlap /next, but both must finish before rows
+    // are filtered. It cannot delay the selected track's immediate playback.
+    const [result, rememberedIds] = await Promise.all([
+      next(item.videoId),
+      getRadioHistoryIds(item.videoId),
+    ]);
     if (generation !== queueGeneration) return;
-    const freshCount = await appendRadioQueue(result, generation);
+    const allowReset = !result.continuation && radioHistoryResetSeed !== item.videoId;
+    const appended = await appendRadioQueue(
+      result,
+      generation,
+      item.videoId,
+      rememberedIds,
+      allowReset,
+    );
     if (generation !== queueGeneration) return;
-    setContinuation(result, generation);
+    if (appended.reset) radioHistoryResetSeed = item.videoId;
+    setContinuation(result, generation, item.videoId);
     lastNextContinueAt = Date.now();
-    if (freshCount > 0) reseedAttemptVideoId = null;
+    if (appended.count > 0) {
+      reseedAttemptVideoId = null;
+      filteredContinuationCount = 0;
+    } else if (appended.historyFiltered && result.continuation) {
+      filteredContinuationCount = 1;
+      lastNextContinueAt = 0;
+      void nextContinue();
+    } else if (!result.continuation) {
+      reseedAttemptVideoId = item.videoId;
+    }
   } catch {
     // Radio seeding is optional; the selected track remains playable. The
     // low-tail path may make one guarded active-track reseed later.
@@ -325,7 +411,8 @@ export async function playSong(item: ParsedItem): Promise<void> {
 }
 
 /** Page the current automix, falling back to one active-track seed when its
- * token is absent/expired. All rows remain in upstream order; no local mix. */
+ * token is absent/expired. All rows remain in upstream order, with the same
+ * history as the root seed while its token is valid. */
 export async function nextContinue(): Promise<void> {
   const activeVideoId = syncReseedActive();
   if (!activeVideoId || state.queue.length - state.index - 1 > CONTINUE_THRESHOLD) return;
@@ -337,38 +424,61 @@ export async function nextContinue(): Promise<void> {
   const continuation = nextContinuationToken;
   const reseed = continuation === null;
   if (reseed && reseedAttemptVideoId === activeVideoId) return;
+  let effectiveSeed = reseed ? activeVideoId : continuationSeed ?? activeVideoId;
 
   lastNextContinueAt = Date.now();
   nextRequestInFlightGeneration = generation;
   if (reseed) reseedAttemptVideoId = activeVideoId;
+  let followFilteredContinuation = false;
 
   try {
-    let result: NextResponse;
-    if (continuation) {
-      try {
-        result = await nextContinueApi(continuation);
-      } catch {
-        // An expired/single-use token must not be retried. Reseed once below.
-        if (generation !== queueGeneration || reseedAttemptVideoId === activeVideoId) return;
-        nextContinuationToken = null;
-        reseedAttemptVideoId = activeVideoId;
-        result = await next(activeVideoId);
-      }
-    } else {
-      result = await next(activeVideoId);
-    }
+    const request = continuation
+      ? nextContinueApi(continuation).catch(async () => {
+          // An expired/single-use token must not be retried. Reseed once below.
+          if (generation !== queueGeneration || reseedAttemptVideoId === activeVideoId) {
+            throw new Error('stale or guarded continuation');
+          }
+          nextContinuationToken = null;
+          continuationSeed = null;
+          filteredContinuationCount = 0;
+          reseedAttemptVideoId = activeVideoId;
+          effectiveSeed = activeVideoId;
+          return next(activeVideoId);
+        })
+      : next(activeVideoId);
+    const result = await request;
+    const rememberedIds = await getRadioHistoryIds(effectiveSeed);
     if (generation !== queueGeneration) return;
 
-    const freshCount = await appendRadioQueue(result, generation);
+    const appended = await appendRadioQueue(
+      result,
+      generation,
+      effectiveSeed,
+      rememberedIds,
+      radioHistoryResetSeed !== effectiveSeed &&
+        (!result.continuation || filteredContinuationCount >= MAX_FILTERED_CONTINUATIONS - 1),
+    );
     if (generation !== queueGeneration) return;
-    setContinuation(result, generation);
-    if (freshCount > 0) reseedAttemptVideoId = null;
-    else if (!result.continuation) reseedAttemptVideoId = activeVideoId;
+    if (appended.reset) radioHistoryResetSeed = effectiveSeed;
+    setContinuation(result, generation, effectiveSeed);
+    if (appended.count > 0) {
+      reseedAttemptVideoId = null;
+      filteredContinuationCount = 0;
+    } else if (appended.historyFiltered && result.continuation) {
+      filteredContinuationCount += 1;
+      followFilteredContinuation = filteredContinuationCount <= MAX_FILTERED_CONTINUATIONS;
+    } else if (!result.continuation) {
+      reseedAttemptVideoId = activeVideoId;
+    }
   } catch {
     // The per-active-video guard prevents status events from tight-retrying a
     // failed reseed. It clears when playback advances to another active id.
   } finally {
     if (nextRequestInFlightGeneration === generation) nextRequestInFlightGeneration = null;
+  }
+  if (followFilteredContinuation && generation === queueGeneration) {
+    lastNextContinueAt = 0;
+    void nextContinue();
   }
 }
 

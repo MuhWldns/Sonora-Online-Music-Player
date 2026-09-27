@@ -79,5 +79,5 @@ Adapter Worker hanya untuk eksperimen endpoint feed (`/healthz`, `/search`, `/ho
 
 1. **Binding IP stream URL**: `X-Forwarded-For` diabaikan YouTube untuk binding `ip=` pada client WEB_REMIX — URL dari `/player` terikat IP server. Kalau HP gagal fetch langsung (403), client fallback ke `/stream` (relay, IP pasti cocok).
 2. **Rate limit**: googlevideo menolak fetch tanpa `Range` + browser `User-Agent` (403) — sudah ditangani di `/stream`. Request `/player` beruntun dalam waktu singkat bisa kena throttle sementara; pola pakai 1 user personal aman.
-3. **PO token**: Node deployment generates content-bound tokens with `bgutils-js`; configure your own deployment and keep its URL outside the public repository.
+3. **PO token**: Node deployment generates content-bound tokens with `bgutils-js`, the Node BotGuard/WebPO provider from [LuanRT/BgUtils](https://github.com/LuanRT/BgUtils). Thank you to that project; Sonora is not affiliated with Google or YouTube. Configure your own deployment and keep its URL outside the public repository.
 4. **Login**: Google memblokir login dari webview embedded — app RN memakai cookie hasil login browser (export via extension/paste), dikirim per-request `x-yt-cookie`.
