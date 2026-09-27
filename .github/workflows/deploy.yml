@@ -58,21 +58,22 @@ jobs:
     name: Deploy to VPS
     needs: build-push
     runs-on: ubuntu-latest
-    # Butuh repo secrets: VPS_HOST, VPS_USER, VPS_SSH_KEY (private key),
-    # dan compose file /sonora/docker-compose.yml di VPS yang pakai image GHCR.
-    if: ${{ vars.VPS_HOST != '' }}
+    # Secrets yang dibutuhkan: VPS_HOST, VPS_USER, VPS_PORT (opsional default 22),
+    # VPS_PASSWORD (password auth) atau VPS_SSH_KEY (private key — pilih salah satu).
+    # Compose file /sonora/docker-compose.yml harus sudah ada di VPS.
+    if: ${{ secrets.VPS_HOST != '' }}
     steps:
-      - name: Write SSH key to temp file (auto-wrap base64 body if PEM header missing)
+      - name: Write SSH key to temp file
+        if: ${{ secrets.VPS_SSH_KEY != '' }}
         env:
           RAW_KEY: ${{ secrets.VPS_SSH_KEY }}
         run: |
           KEYFILE="$RUNNER_TEMP/sonora_id_key"
           if echo "$RAW_KEY" | head -1 | grep -q "BEGIN OPENSSH"; then
             printf '%s\n' "$RAW_KEY" > "$KEYFILE"
-            echo "key already has PEM header"
           else
             printf '%s\n%s\n%s\n' "-----BEGIN OPENSSH PRIVATE KEY-----" "$RAW_KEY" "-----END OPENSSH PRIVATE KEY-----" > "$KEYFILE"
-            echo "::warning::VPS_SSH_KEY secret lacks PEM header/footer (base64 body only) - auto-wrapped. Re-paste the FULL key file to fix properly."
+            echo "::warning::VPS_SSH_KEY lacks PEM header — auto-wrapped. Re-paste full key to fix."
           fi
           chmod 600 "$KEYFILE"
 
@@ -81,9 +82,9 @@ jobs:
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
-          port: 2104
-          key_path: ${{ runner.temp }}/sonora_id_key
-          debug: true
+          port: ${{ secrets.VPS_PORT }}
+          password: ${{ secrets.VPS_PASSWORD }}
+          key_path: ${{ secrets.VPS_SSH_KEY != '' && format('{0}/sonora_id_key', runner.temp) || '' }}
           script: |
             cd /sonora
             docker compose pull
