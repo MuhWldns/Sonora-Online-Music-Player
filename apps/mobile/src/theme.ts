@@ -7,7 +7,7 @@ import { DarkTheme, DefaultTheme } from '@react-navigation/native';
 import type { Theme } from '@react-navigation/native';
 
 export const ACCENT = '#F59E0B'; // amber-500; Sonora signature
-export const ACCENT_DIM = '#B45309'; // amber-700 — accent text on light surfaces
+export const ACCENT_DIM = '#B45309'; // amber-700 - accent text on light surfaces
 
 export interface Palette {
   background: string;
@@ -53,7 +53,7 @@ export const darkPalette: Palette = {
   textSecondary: '#A8A49C',
   outline: '#38352F',
   accent: ACCENT,
-  accentText: '#FBBF24', // amber-400 — accent text on dark surfaces
+  accentText: '#FBBF24', // amber-400 - accent text on dark surfaces
   onAccent: '#1A1917',
   error: '#F2B8B5',
   onSurfaceVariant: '#CAC4D0',
@@ -121,4 +121,20 @@ export const TOUCH_TARGET = 48;
 export const elevation = {
   raised: 2,
   sheet: 8,
+} as const;
+
+/**
+ * Glassmorphism tokens: translucent white surfaces over the deep dark canvas.
+ * Apple-style material layering: refraction border + soft ambient glow.
+ */
+export const glass = {
+  surface: 'rgba(255, 255, 255, 0.08)',
+  surfaceSubtle: 'rgba(255, 255, 255, 0.04)',
+  surfaceElevated: 'rgba(255, 255, 255, 0.14)',
+  surfaceActive: 'rgba(255, 255, 255, 0.22)',
+  border: 'rgba(255, 255, 255, 0.14)',
+  borderHighlight: 'rgba(255, 255, 255, 0.28)',
+  pill: 'rgba(255, 255, 255, 0.12)',
+  pillActive: 'rgba(255, 255, 255, 0.25)',
+  glow: 'rgba(245, 158, 11, 0.18)',
 } as const;
