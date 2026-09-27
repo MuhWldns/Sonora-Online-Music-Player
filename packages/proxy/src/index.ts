@@ -373,8 +373,8 @@ function parseCardShelf(top: Record<string, unknown>) {
 
 
 /** Playlist id perlu prefix VL untuk endpoint browse. */
-function normalizeBrowseId(id: string): string {
-  if (/^(PL|RDCLAK|OLAK)/.test(id) && !id.startsWith('VL')) return `VL${id}`;
+export function normalizeBrowseId(id: string): string {
+  if (/^(PL|RD|OLAK)/.test(id) && !id.startsWith('VL')) return `VL${id}`;
   return id;
 }
 

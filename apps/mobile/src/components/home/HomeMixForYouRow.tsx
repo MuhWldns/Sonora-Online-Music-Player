@@ -1,97 +1,110 @@
 /**
- * Home "Mix for you" row. One horizontal row of 8 cards seeded by the most
- * recent track in the local recently-played store. Re-uses the existing
- * `/next?videoId=…` proxy endpoint (same RDAMVM automix the player already
- * seeds with). Re-fetches when the seed changes. Hidden when there is no
- * recently-played track.
+ * Home "Mix for you" row. Renders algorithmic mix playlists:
+ * 1. If YouTube cookie is present, extracts algorithmic mix playlists from /home shelves
+ *    matching mix keywords ("Mixed for you", "Campuran untuk Anda", "Mix", "Supermix").
+ * 2. Fallback: generates automix playlist items (track mixes & artist radios) from
+ *    recent listening history (getRecentlyPlayed()).
  */
-import { useEffect, useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { ScrollView, StyleSheet, View } from 'react-native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
+import { getCookie, home } from '../../api/client';
+import type { ParsedItem } from '../../api/types';
 import { SectionHeader } from '../Icon';
-import { next } from '../../api/client';
-import type { QueueItem } from '../../api/types';
-import { playSong } from '../../player/service';
-import { subscribeRecentlyPlayed, type RecentlyPlayed } from '../../storage/recentlyPlayed';
-import { spacing, typeScale } from '../../theme';
+import { ShelfCard } from '../TrackRow';
+import type { RootStackParamList } from '../../navigation/types';
+import { ensureLoaded, subscribeRecentlyPlayed } from '../../storage/recentlyPlayed';
+import { spacing } from '../../theme';
 import type { Palette } from '../../theme';
-
-const SEED_LIMIT = 8;
+import { buildAutomixPlaylists, extractMixPlaylists } from './mixPlaylists';
 
 export function HomeMixForYouRow({ palette }: { palette: Palette }) {
-  const [seed, setSeed] = useState<RecentlyPlayed | null>(null);
-  const [tracks, setTracks] = useState<QueueItem[]>([]);
+  const [items, setItems] = useState<ParsedItem[]>([]);
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
-  useEffect(() => subscribeRecentlyPlayed((items) => setSeed(items[0] ?? null)), []);
+  const loadFallback = useCallback(async () => {
+    const recent = await ensureLoaded();
+    setItems(buildAutomixPlaylists(recent));
+  }, []);
 
+  // Re-check on focus
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false;
+      void (async () => {
+        let cookie: string | null = null;
+        try {
+          cookie = await getCookie();
+        } catch {
+          cookie = null;
+        }
+
+        if (cookie) {
+          try {
+            const { sections } = await home();
+            if (cancelled) return;
+            const mixPlaylists = extractMixPlaylists(sections);
+            if (mixPlaylists.length > 0) {
+              setItems(mixPlaylists);
+              return;
+            }
+          } catch {
+            // fall back
+          }
+        }
+
+        if (cancelled) return;
+        const recent = await ensureLoaded();
+        if (cancelled) return;
+        setItems(buildAutomixPlaylists(recent));
+      })();
+
+      return () => {
+        cancelled = true;
+      };
+    }, []),
+  );
+
+  // Subscribe to local history changes (for automix fallback when no cookie)
   useEffect(() => {
-    if (!seed) {
-      setTracks([]);
-      return;
-    }
-    let cancelled = false;
-    next(seed.videoId)
-      .then(({ queue }) => {
-        if (cancelled) return;
-        // /next returns the seed as `selected: true`; drop it so the row only
-        // shows fresh recommendations.
-        setTracks(queue.filter((t) => !t.selected).slice(0, SEED_LIMIT));
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setTracks([]);
+    return subscribeRecentlyPlayed((recent) => {
+      void getCookie().then((c) => {
+        if (!c) {
+          setItems(buildAutomixPlaylists(recent));
+        }
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [seed?.videoId, seed?.playedAt]);
+    });
+  }, []);
 
-  if (!seed || tracks.length === 0) return null;
+  const onOpen = useCallback(
+    (item: ParsedItem) => {
+      const id = item.playlistId ?? item.browseId;
+      if (id) {
+        navigation.navigate('Browse', { id, title: item.title });
+      }
+    },
+    [navigation],
+  );
 
-  const title = `Mix for you · based on “${seed.title}”`;
+  if (items.length === 0) return null;
 
   return (
     <View style={styles.block}>
-      <SectionHeader title={title} palette={palette} />
+      <SectionHeader title="Mix for you" palette={palette} />
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.row}
       >
-        {tracks.map((track) => (
-          <Pressable
-            key={track.videoId}
-            accessibilityRole="button"
-            accessibilityLabel={`Putar ${track.title}`}
-            onPress={() =>
-              playSong({
-                type: 'song',
-                title: track.title,
-                artists: track.artist ? [{ name: track.artist }] : undefined,
-                thumbnail: track.thumbnail,
-                videoId: track.videoId,
-              }).catch(() => {})
-            }
-            style={({ pressed }) => [styles.card, pressed && { opacity: 0.6 }]}
-          >
-            {track.thumbnail ? (
-              <Image source={{ uri: track.thumbnail }} style={[styles.thumb, { backgroundColor: palette.surfaceVariant }]} />
-            ) : (
-              <View style={[styles.thumb, styles.thumbFallback, { backgroundColor: palette.surfaceVariant }]}>
-                <Text style={[styles.thumbFallbackText, { color: palette.textSecondary }]}>
-                  {track.title.slice(0, 1).toUpperCase()}
-                </Text>
-              </View>
-            )}
-            <Text numberOfLines={2} style={[styles.title, { color: palette.text }]}>
-              {track.title}
-            </Text>
-            {track.artist ? (
-              <Text numberOfLines={1} style={[styles.subtitle, { color: palette.textSecondary }]}>
-                {track.artist}
-              </Text>
-            ) : null}
-          </Pressable>
+        {items.map((item, i) => (
+          <ShelfCard
+            key={`${item.playlistId ?? item.browseId ?? item.title}-${i}`}
+            item={item}
+            onOpen={onOpen}
+            palette={palette}
+          />
         ))}
       </ScrollView>
     </View>
@@ -100,11 +113,5 @@ export function HomeMixForYouRow({ palette }: { palette: Palette }) {
 
 const styles = StyleSheet.create({
   block: { marginTop: spacing.lg },
-  row: { paddingHorizontal: spacing.lg, gap: spacing.md },
-  card: { width: 152, gap: spacing.sm },
-  thumb: { width: 152, height: 152, borderRadius: 8 },
-  thumbFallback: { alignItems: 'center', justifyContent: 'center' },
-  thumbFallbackText: { fontSize: typeScale.titleLarge, fontWeight: '700' },
-  title: { fontSize: typeScale.body, fontWeight: '600' },
-  subtitle: { fontSize: typeScale.label },
+  row: { paddingHorizontal: spacing.lg },
 });

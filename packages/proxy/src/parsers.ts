@@ -104,7 +104,7 @@ export function endpointInfo(nav?: NavigationEndpoint): EndpointInfo {
     let type: EndpointInfo['browseType'] = undefined;
     if (id.startsWith('MPRE')) type = 'album';
     else if (id.startsWith('UC') || id.startsWith('MPLA')) type = 'artist';
-    else if (id.startsWith('VL') || id.startsWith('PL') || id.startsWith('RDCLAK'))
+    else if (id.startsWith('VL') || id.startsWith('PL') || id.startsWith('RD'))
       type = 'playlist';
     return { browseId: id, browseType: type };
   }
