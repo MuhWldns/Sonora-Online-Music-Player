@@ -42,8 +42,9 @@ Pembagian kerja internal (hasil PoC):
 | `GET /next` | `videoId` | radio queue (up to 50 items), with YTM continuation when supplied |
 | `GET /next/continue` | `token` | next YTM-ordered radio page, with its following continuation when supplied |
 | `GET /player` | `videoId` | URL stream deciphered (metadata + bitrate + mime) |
-| `GET /stream` | `videoId` | **relay fallback** — audio bytes lewat server |
+| `GET /lyrics` | `videoId` | plain lyrics from YTM track lyrics tab; returns `lyrics: null` when unavailable |
 
+Lyrics response contract: `{ lyrics: { lines: Array<{ text: string, startMs?: number, endMs?: number }>, synced: boolean, source?: string } | null }`. The current upstream YTM shape provides plain text only, so Sonora returns `synced: false` and does not fabricate timestamps. Availability depends on YTM catalog, account, and region; there is no third-party scraping fallback.
 Radio paging is deliberately upstream-controlled: the proxy parses the queue and
 the next InnerTube continuation token but never shuffles or mixes local seeds.
 The mobile player appends unseen rows in that order, up to 100 queued tracks. If

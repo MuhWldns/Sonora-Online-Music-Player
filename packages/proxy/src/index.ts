@@ -13,7 +13,7 @@ import { Hono } from 'hono';
 import type { CacheAdapter } from './cache.js';
 import { createPlaybackInnertube, getDataInnertube, type InnertubeDeps } from './innertube.js';
 import type { Innertube as InnertubeInstance } from 'youtubei.js/agnostic';
-import { findAll, findFirst, parseBrowseSections, parseListItem, parseNextResponse, parseSections, parseTwoRow, text, thumbs, type ParsedItem } from './parsers.js';
+import { findAll, findFirst, parseBrowseSections, parseListItem, parseLyricsBrowseId, parseLyricsResponse, parseNextResponse, parseSections, parseTwoRow, text, thumbs, type ParsedItem } from './parsers.js';
 import { upstreamRangeFor } from './stream-range.js';
 
 export interface AppDeps extends InnertubeDeps {
@@ -171,6 +171,30 @@ export function createApp(deps: AppDeps): Hono {
       },
     });
     return c.json(parseNextResponse(data));
+  });
+
+  app.get('/lyrics', async (c) => {
+    const videoId = c.req.query('videoId')?.trim();
+    if (!videoId) return c.json({ error: 'missing videoId' }, 400);
+    if (!/^[A-Za-z0-9_-]{11}$/.test(videoId)) {
+      return c.json({ error: 'invalid videoId' }, 400);
+    }
+
+    const yt = await getDataInnertube(deps, cookieOf(c));
+    const nextData = await rawExecute(yt, '/next', {
+      videoId,
+      playlistId: `RDAMVM${videoId}`,
+      isAudioOnly: true,
+      tunerSettingValue: 'AUTOMIX_SETTING_NORMAL',
+      watchEndpointMusicSupportedConfigs: {
+        watchEndpointMusicConfig: { musicVideoType: 'MUSIC_VIDEO_TYPE_ATV' },
+      },
+    });
+    const browseId = parseLyricsBrowseId(nextData);
+    if (!browseId) return c.json({ lyrics: null });
+
+    const lyricsData = await rawExecute(yt, '/browse', { browseId });
+    return c.json(parseLyricsResponse(lyricsData));
   });
 
   app.get('/next/continue', async (c) => {

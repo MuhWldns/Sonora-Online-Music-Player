@@ -3,9 +3,10 @@
  * a full-player modal sheet. Canon streaming grammar (Spotify/YTM); Material 3
  * structure — tonal surface, 48dp controls, system back closes the sheet.
  */
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
+  ActivityIndicator,
   Animated,
   Image,
   Modal,
@@ -19,6 +20,8 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 
+import { lyrics as fetchLyrics } from '../api/client';
+import type { Lyrics } from '../api/types';
 import { Icon, IconButton } from './Icon';
 import type { IconName } from './Icon';
 import { formatSec } from './TrackRow';
@@ -38,6 +41,7 @@ import type { PlayerTrack } from '../player/service';
 import { darkPalette, radius, spacing, TOUCH_TARGET, typeScale } from '../theme';
 import type { Palette } from '../theme';
 
+const lyricsCache = new Map<string, Lyrics | null>();
 function ProgressSlider({
   currentTime,
   duration,
@@ -595,6 +599,85 @@ function QueueEditor({
     </View>
   );
 }
+function LyricsPanel({ videoId, palette }: { videoId: string; palette: Palette }) {
+  const hasCached = lyricsCache.has(videoId);
+  const [data, setData] = useState<Lyrics | null>(() => lyricsCache.get(videoId) ?? null);
+  const [loading, setLoading] = useState(!hasCached);
+  const [failed, setFailed] = useState(false);
+  const [retry, setRetry] = useState(0);
+
+  useEffect(() => {
+    const cached = lyricsCache.get(videoId);
+    if (lyricsCache.has(videoId)) {
+      setData(cached ?? null);
+      setLoading(false);
+      setFailed(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    setData(null);
+    setLoading(true);
+    setFailed(false);
+    fetchLyrics(videoId, controller.signal)
+      .then((response) => {
+        if (controller.signal.aborted) return;
+        lyricsCache.set(videoId, response.lyrics);
+        setData(response.lyrics);
+        setLoading(false);
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted || (error instanceof Error && error.name === 'AbortError')) return;
+        setLoading(false);
+        setFailed(true);
+      });
+    return () => controller.abort();
+  }, [videoId, retry]);
+
+  if (loading) {
+    return (
+      <View style={s.lyricsState} accessibilityLabel="Memuat lirik">
+        <ActivityIndicator color={palette.accent} />
+        <Text style={[s.lyricsStateText, { color: palette.textSecondary }]}>Memuat lirik…</Text>
+      </View>
+    );
+  }
+  if (failed) {
+    return (
+      <View style={s.lyricsState}>
+        <Text style={[s.lyricsStateText, { color: palette.error }]}>Lirik tidak dapat dimuat</Text>
+        <Pressable
+          onPress={() => setRetry((value) => value + 1)}
+          accessibilityRole="button"
+          accessibilityLabel="Coba muat lirik lagi"
+          style={({ pressed }) => [s.lyricsRetry, pressed && { opacity: 0.7 }]}
+        >
+          <Text style={[s.lyricsRetryText, { color: palette.accentText }]}>Coba lagi</Text>
+        </Pressable>
+      </View>
+    );
+  }
+  if (!data || data.lines.length === 0) {
+    return (
+      <View style={s.lyricsState}>
+        <Text style={[s.lyricsStateText, { color: palette.textSecondary }]}>Lirik belum tersedia untuk lagu ini</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={s.lyricsPanel}>
+      <ScrollView contentContainerStyle={s.lyricsContent} accessibilityLabel="Lirik lagu">
+        {data.lines.map((line, index) => (
+          <Text key={`${index}-${line.text}`} style={[s.lyricsLine, { color: palette.text }]}>
+            {line.text || ' '}
+          </Text>
+        ))}
+        {data.source ? <Text style={[s.lyricsSource, { color: palette.textSecondary }]}>{data.source}</Text> : null}
+      </ScrollView>
+    </View>
+  );
+}
 
 function FullPlayer({ palette, onClose }: { palette: Palette; onClose: () => void }) {
   const { queue, index, playing, buffering, currentTime, duration, shuffle, error } =
@@ -610,7 +693,17 @@ function FullPlayer({ palette, onClose }: { palette: Palette; onClose: () => voi
     }));
   const track = queue[index];
   const [queueOpen, setQueueOpen] = useState(false);
+  const [lyricsOpen, setLyricsOpen] = useState(false);
   const insets = useSafeAreaInsets();
+
+  const closeViews = () => {
+    if (queueOpen || lyricsOpen) {
+      setQueueOpen(false);
+      setLyricsOpen(false);
+    } else {
+      onClose();
+    }
+  };
 
   if (!track) return null;
 
@@ -619,26 +712,43 @@ function FullPlayer({ palette, onClose }: { palette: Palette; onClose: () => voi
       animationType="slide"
       visible
       statusBarTranslucent
-      onRequestClose={() => (queueOpen ? setQueueOpen(false) : onClose())}
+      onRequestClose={closeViews}
     >
-      <View style={[s.sheet, { backgroundColor: palette.background, paddingTop: insets.top + spacing.sm }]}>
+      <View
+        style={[
+          s.sheet,
+          { backgroundColor: palette.background, paddingTop: insets.top + spacing.sm },
+        ]}
+      >
         <StatusBar style={palette === darkPalette ? 'light' : 'dark'} />
         <View style={s.sheetGrabRow}>
           <IconButton
             name="keyboard-arrow-down"
             color={palette.textSecondary}
-            onPress={onClose}
+            onPress={closeViews}
             accessibilityLabel="Tutup pemutar"
           />
-          <Text style={[s.sheetContext, { color: palette.textSecondary }]}>
-            Sedang diputar
-          </Text>
-          <IconButton
-            name={queueOpen ? 'album' : 'queue-music'}
-            color={palette.textSecondary}
-            onPress={() => setQueueOpen(!queueOpen)}
-            accessibilityLabel={queueOpen ? 'Lihat sampul' : 'Lihat antrean'}
-          />
+          <Text style={[s.sheetContext, { color: palette.textSecondary }]}>Sedang diputar</Text>
+          <View style={s.sheetActions}>
+            <IconButton
+              name="notes"
+              color={lyricsOpen ? palette.accent : palette.textSecondary}
+              onPress={() => {
+                setLyricsOpen((value) => !value);
+                setQueueOpen(false);
+              }}
+              accessibilityLabel={lyricsOpen ? 'Tutup lirik' : 'Lihat lirik'}
+            />
+            <IconButton
+              name={queueOpen ? 'album' : 'queue-music'}
+              color={queueOpen ? palette.accent : palette.textSecondary}
+              onPress={() => {
+                setQueueOpen((value) => !value);
+                setLyricsOpen(false);
+              }}
+              accessibilityLabel={queueOpen ? 'Lihat sampul' : 'Lihat antrean'}
+            />
+          </View>
         </View>
 
         {queueOpen ? (
@@ -650,6 +760,8 @@ function FullPlayer({ palette, onClose }: { palette: Palette; onClose: () => voi
             palette={palette}
             bottomInset={insets.bottom}
           />
+        ) : lyricsOpen ? (
+          <LyricsPanel key={track.videoId} videoId={track.videoId} palette={palette} />
         ) : (
           <View style={s.sheetBody}>
             {track.thumbnail ? (
@@ -799,6 +911,15 @@ const s = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: spacing.sm,
   },
+  sheetActions: { flexDirection: 'row', alignItems: 'center' },
+  lyricsPanel: { flex: 1, paddingHorizontal: spacing.xl },
+  lyricsContent: { paddingTop: spacing.xl, paddingBottom: spacing.xxl, gap: spacing.md },
+  lyricsLine: { fontSize: typeScale.title, lineHeight: 24, textAlign: 'left' },
+  lyricsSource: { fontSize: typeScale.small, marginTop: spacing.lg },
+  lyricsState: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.md, padding: spacing.xl },
+  lyricsStateText: { fontSize: typeScale.body, textAlign: 'center' },
+  lyricsRetry: { minHeight: TOUCH_TARGET, minWidth: TOUCH_TARGET, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.lg },
+  lyricsRetryText: { fontSize: typeScale.body, fontWeight: '700' },
   sheetContext: { fontSize: typeScale.label, fontWeight: '600', letterSpacing: 0.2 },
   sheetBody: { flex: 1, alignItems: 'center', paddingHorizontal: spacing.xl, gap: spacing.lg },
   art: { width: '100%', aspectRatio: 1, borderRadius: radius.lg, backgroundColor: 'transparent' },

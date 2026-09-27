@@ -9,7 +9,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Keychain from 'react-native-keychain';
 
-import type { BrowseResponse, HistoryResponse, HomeResponse, NextResponse, PlayerResponse, SearchResponse } from './types';
+import type { BrowseResponse, HistoryResponse, HomeResponse, LyricsResponse, NextResponse, PlayerResponse, SearchResponse } from './types';
 
 const configuredProxyBase = process.env.EXPO_PUBLIC_PROXY_BASE;
 export const DEFAULT_PROXY_BASE =
@@ -49,6 +49,7 @@ export async function clearCookie(): Promise<void> {
 export async function api<T>(
   path: string,
   params?: Record<string, string>,
+  signal?: AbortSignal,
 ): Promise<T> {
   const base = await getProxyBase();
   const cookie = await getCookie();
@@ -57,6 +58,7 @@ export async function api<T>(
 
   const res = await fetch(url.toString(), {
     headers: cookie ? { 'x-yt-cookie': cookie } : undefined,
+    signal,
   });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
@@ -80,6 +82,9 @@ export const nextContinue = (token: string) =>
   api<NextResponse>('/next/continue', { token });
 
 export const player = (videoId: string) => api<PlayerResponse>('/player', { videoId });
+
+export const lyrics = (videoId: string, signal?: AbortSignal) =>
+  api<LyricsResponse>('/lyrics', { videoId }, signal);
 
 /** Playback source: relay via proxy (IP-safe fallback path). videoId
  * di-encode karena bisa mengandung karakter URL-unsafe walau format

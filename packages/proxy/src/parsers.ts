@@ -339,3 +339,101 @@ export function parseNextResponse(data: unknown): ParsedNextResponse {
   const continuation = nextContinuation(data);
   return continuation ? { queue, continuation } : { queue };
 }
+
+export interface LyricsLine {
+  text: string;
+  startMs?: number;
+  endMs?: number;
+}
+
+export interface ParsedLyrics {
+  lines: LyricsLine[];
+  synced: boolean;
+  source?: string;
+}
+
+export interface LyricsResponse {
+  lyrics: ParsedLyrics | null;
+}
+
+interface LyricsText {
+  runs?: { text?: string }[];
+  simpleText?: string;
+}
+
+const lyricsText = (value: unknown): string => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
+  const candidate = value as LyricsText;
+  if (Array.isArray(candidate.runs)) {
+    return candidate.runs.map((run) => (typeof run.text === 'string' ? run.text : '')).join('');
+  }
+  return typeof candidate.simpleText === 'string' ? candidate.simpleText : '';
+};
+
+function normalizedLyricsLines(value: unknown): LyricsLine[] {
+  const normalized = lyricsText(value).replace(/\r\n?/g, '\n');
+  if (!normalized) return [];
+  return normalized.split('\n').map((line) => ({ text: line }));
+}
+
+function lyricsBrowseIdFromTab(tab: unknown): string | undefined {
+  if (!tab || typeof tab !== 'object' || Array.isArray(tab)) return undefined;
+  const renderer = (tab as Record<string, unknown>).tabRenderer;
+  if (!renderer || typeof renderer !== 'object' || Array.isArray(renderer)) return undefined;
+  const endpoint = (renderer as Record<string, unknown>).endpoint;
+  if (!endpoint || typeof endpoint !== 'object' || Array.isArray(endpoint)) return undefined;
+  const browse = (endpoint as Record<string, unknown>).browseEndpoint;
+  if (!browse || typeof browse !== 'object' || Array.isArray(browse)) return undefined;
+  const config = (browse as Record<string, unknown>).browseEndpointContextSupportedConfigs;
+  const musicConfig = config && typeof config === 'object' && !Array.isArray(config)
+    ? (config as Record<string, unknown>).browseEndpointContextMusicConfig
+    : undefined;
+  const pageType = musicConfig && typeof musicConfig === 'object' && !Array.isArray(musicConfig)
+    ? (musicConfig as Record<string, unknown>).pageType
+    : undefined;
+  const browseId = (browse as Record<string, unknown>).browseId;
+  return pageType === 'MUSIC_PAGE_TYPE_TRACK_LYRICS' && typeof browseId === 'string' && browseId
+    ? browseId
+    : undefined;
+}
+
+/** Find the verified YTM lyrics tab endpoint in a raw /next response. */
+export function parseLyricsBrowseId(data: unknown): string | undefined {
+  for (const wrapper of findAll<Record<string, unknown>>(data, 'watchNextTabbedResultsRenderer')) {
+    const tabs = wrapper.tabs;
+    if (!Array.isArray(tabs)) continue;
+    for (const tab of tabs) {
+      const browseId = lyricsBrowseIdFromTab(tab);
+      if (browseId) return browseId;
+    }
+  }
+  return undefined;
+}
+
+function firstLyricsShelf(data: unknown): Record<string, unknown> | undefined {
+  for (const shelf of findAll<Record<string, unknown>>(data, 'musicDescriptionShelfRenderer')) {
+    return shelf;
+  }
+  return undefined;
+}
+
+/** Parse the plain-text MusicDescriptionShelf returned by the YTM lyrics browse. */
+export function parseLyricsResponse(data: unknown): LyricsResponse {
+  const shelf = firstLyricsShelf(data);
+  if (shelf) {
+    const lines = normalizedLyricsLines(shelf.description);
+    if (!lines.length) return { lyrics: null };
+    const sourceText = lyricsText(shelf.footer).replace(/\r\n?/g, '\n').trim();
+    return {
+      lyrics: {
+        lines,
+        synced: false,
+        ...(sourceText ? { source: sourceText } : {}),
+      },
+    };
+  }
+
+  // YTM uses a messageRenderer for unavailable lyrics; do not expose its copy.
+  if (findAll(data, 'messageRenderer').length > 0) return { lyrics: null };
+  return { lyrics: null };
+}

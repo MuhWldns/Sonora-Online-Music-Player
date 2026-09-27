@@ -71,3 +71,19 @@ export interface PlayerResponse {
   artist: string;
   durationMs: number;
 }
+
+export interface LyricsLine {
+  text: string;
+  startMs?: number;
+  endMs?: number;
+}
+
+export interface Lyrics {
+  lines: LyricsLine[];
+  synced: boolean;
+  source?: string;
+}
+
+export interface LyricsResponse {
+  lyrics: Lyrics | null;
+}

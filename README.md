@@ -15,7 +15,7 @@ The proxy runs as a Docker container on a self-hosted Node.js server. Authentica
 - Library & liked songs from your own account (cookie-authenticated)
 - Audio playback with queue/radio (up next) support
 - Editable queue — reorder by drag, swipe to remove, and add next or to the end without interrupting the current track
-- Credentials stored only on your device — server is stateless
+- Lyrics tab in the full player with session caching and explicit loading, empty, and retry states
 - One-command deployment on a self-hosted Node.js server via Docker
 
 ## Repository layout
@@ -44,9 +44,10 @@ The proxy runs as a Docker container on a self-hosted Node.js server. Authentica
 | `GET /next` | `videoId` | radio queue (up to 50 items) plus its YTM continuation token |
 | `GET /next/continue` | `token` | next queue page plus its YTM continuation token |
 | `GET /player` | `videoId` | deciphered stream URL + metadata |
-| `GET /stream` | `videoId` | relay fallback — audio bytes streamed via server |
+| `GET /lyrics` | `videoId` | plain lyrics from the YouTube Music lyrics tab (HTTP 200 with `lyrics: null` when unavailable) |
 
 Account cookie is passed per-request via the `x-yt-cookie` header and is never stored server-side.
+Lyrics availability depends on the YouTube Music catalog, account, and region. Sonora does not use a third-party scraping fallback, and synchronized timestamps are not exposed because the upstream response currently supplies plain text only.
 Radio recommendations remain in YouTube Music's algorithmic order. The client
 chains continuation pages, deduplicates by video ID, and caps its live queue at
 100 tracks. It also keeps a bounded local per-seed history of appended video IDs
