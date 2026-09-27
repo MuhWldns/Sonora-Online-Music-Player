@@ -576,7 +576,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 0,
     left: 0,
-    right: 0,
+    width: SWIPE_REVEAL,
     bottom: 0,
     // The row slides right, so the revealed strip is the LEFT edge.
     alignItems: 'flex-start',
