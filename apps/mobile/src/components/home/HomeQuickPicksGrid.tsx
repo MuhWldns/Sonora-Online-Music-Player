@@ -22,7 +22,7 @@ import {
   subscribeRecentlyPlayed,
   type RecentlyPlayed,
 } from '../../storage/recentlyPlayed';
-import { spacing, typeScale } from '../../theme';
+import { glass, spacing, typeScale } from '../../theme';
 import type { Palette } from '../../theme';
 
 const ITEMS_PER_COLUMN = 6;
@@ -137,6 +137,12 @@ const styles = StyleSheet.create({
   },
   column: {
     gap: spacing.xs,
+    backgroundColor: glass.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: glass.border,
+    overflow: 'hidden',
+    padding: spacing.xs,
   },
   row: {
     flexDirection: 'row',

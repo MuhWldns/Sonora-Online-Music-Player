@@ -1,12 +1,15 @@
 /**
  * Spotify-style animated lyrics: kinetic typography on a deep glass canvas.
- * The synced active line renders at display weight and full brightness;
- * neighbors dim back. Smooth scroll keeps the focused line centered, tap
- * focuses (and seeks, when timed), and a warm ambient glow breathes behind
- * the container. Fetching, caching, and retry live here so the player sheet
- * stays declarative.
+ * Each line owns Animated.Values for opacity and scale — driven by native
+ * driver so transitions run at 60 fps without touching the JS thread.
+ *
+ * States per line:
+ *   active  (being sung)  → opacity 1.0, scale 1.05, size 26/800
+ *   past    (already sung) → opacity 0.25, scale 1.0,  size 20/700
+ *   future  (not yet)      → opacity 0.45, scale 1.0,  size 20/700
+ *   no sync                → opacity 0.85 all,         size 20/700
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
   ActivityIndicator,
@@ -20,24 +23,124 @@ import {
 } from 'react-native';
 
 import { lyrics as fetchLyrics } from '../../api/client';
-import type { Lyrics } from '../../api/types';
+import type { Lyrics, LyricsLine } from '../../api/types';
 import { seekTo } from '../../player/service';
 import { glass, radius, spacing, TOUCH_TARGET, typeScale } from '../../theme';
 import type { Palette } from '../../theme';
 import { activeLineIndex, focusScrollOffset, nearestTimedIndex } from './lyricsPosition';
 
+/** Handle returned by setTimeout — named to avoid ReturnType<typeof ...>. */
+type TimeoutHandle = number;
+
 /** Module-level lyrics cache: survives view switches inside a session. */
 const lyricsCache = new Map<string, Lyrics | null>();
-
-/** Platform timer handle for the manual-focus release timeout. */
-type TimerHandle = ReturnType<typeof globalThis.setTimeout>;
-
 /** Kinetic type roles (spec): active 26/800 full white, inactive 20/700 dim. */
 const ACTIVE_SIZE = 26;
 const INACTIVE_SIZE = 20;
 /** Approximate rendered line pitch used for scroll-centering math. */
 const LINE_PITCH = 44;
 const CONTENT_TOP_PADDING = spacing.xxl;
+
+/** Durations for opacity/scale transitions in ms. */
+const FADE_IN_MS = 180;
+const FADE_OUT_MS = 320;
+const SCALE_IN_MS = 200;
+const SCALE_OUT_MS = 280;
+
+// ─── Per-line animated row ──────────────────────────────────────────────────
+
+interface LyricRowProps {
+  line: LyricsLine;
+  index: number;
+  state: 'active' | 'past' | 'future' | 'unsync';
+  palette: Palette;
+  synced: boolean;
+  onPress: (index: number) => void;
+}
+
+const TARGET_OPACITY: Record<LyricRowProps['state'], number> = {
+  active: 1.0,
+  past: 0.25,
+  future: 0.45,
+  unsync: 0.85,
+};
+const TARGET_SCALE: Record<LyricRowProps['state'], number> = {
+  active: 1.05,
+  past: 1.0,
+  future: 1.0,
+  unsync: 1.0,
+};
+
+const LyricRow = memo(function LyricRow({
+  line,
+  index,
+  state,
+  palette,
+  synced,
+  onPress,
+}: LyricRowProps) {
+  const opacity = useRef(new Animated.Value(TARGET_OPACITY[state])).current;
+  const scale = useRef(new Animated.Value(TARGET_SCALE[state])).current;
+  const prevState = useRef(state);
+
+  useEffect(() => {
+    if (prevState.current === state) return;
+    prevState.current = state;
+
+    const toOpacity = TARGET_OPACITY[state];
+    const toScale = TARGET_SCALE[state];
+    const activating = state === 'active';
+
+    Animated.parallel([
+      Animated.timing(opacity, {
+        toValue: toOpacity,
+        duration: activating ? FADE_IN_MS : FADE_OUT_MS,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+      Animated.spring(scale, {
+        toValue: toScale,
+        speed: activating ? 18 : 22,
+        bounciness: activating ? 4 : 0,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [state, opacity, scale]);
+
+  const isActive = state === 'active';
+
+  return (
+    <Pressable
+      onPress={() => onPress(index)}
+      accessibilityRole="button"
+      accessibilityLabel={line.text || 'Baris kosong'}
+      accessibilityHint={synced ? 'Lompat ke bagian lagu ini' : undefined}
+      accessibilityState={{ selected: isActive }}
+      style={({ pressed }) => [
+        styles.lineHit,
+        pressed && { opacity: 0.7, transform: [{ scale: 0.98 }] },
+      ]}
+    >
+      <Animated.Text
+        style={[
+          styles.line,
+          {
+            color: palette.text,
+            fontSize: isActive ? ACTIVE_SIZE : INACTIVE_SIZE,
+            fontWeight: isActive ? '800' : '700',
+            lineHeight: isActive ? 34 : 28,
+            opacity,
+            transform: [{ scale }],
+          },
+        ]}
+      >
+        {line.text || ' '}
+      </Animated.Text>
+    </Pressable>
+  );
+});
+
+// ─── Main component ─────────────────────────────────────────────────────────
 
 export function AnimatedLyricsView({
   videoId,
@@ -60,7 +163,7 @@ export function AnimatedLyricsView({
 
   // Manual focus wins briefly after a tap, then playback focus resumes.
   const [manualFocus, setManualFocus] = useState<number | null>(null);
-  const manualFocusTimer = useRef<TimerHandle | null>(null);
+  const manualFocusTimer = useRef<TimeoutHandle | null>(null);
 
   const scrollRef = useRef<ScrollView>(null);
   const viewportH = useRef(0);
@@ -149,19 +252,21 @@ export function AnimatedLyricsView({
     setManualFocus(null);
   }, [videoId]);
 
-  function focusLine(index: number): void {
-    setManualFocus(index);
-    if (manualFocusTimer.current) clearTimeout(manualFocusTimer.current);
-    // Manual focus holds for a few seconds, then playback reclaims the focus.
-    manualFocusTimer.current = setTimeout(() => setManualFocus(null), 5000);
+  const focusLine = useCallback(
+    (index: number): void => {
+      setManualFocus(index);
+      if (manualFocusTimer.current) clearTimeout(manualFocusTimer.current);
+      manualFocusTimer.current = setTimeout(() => setManualFocus(null), 5000);
 
-    if (synced) {
-      const timed = nearestTimedIndex(lines, index);
-      const startMs = timed >= 0 ? lines[timed].startMs : undefined;
-      if (startMs !== undefined) seekTo(startMs / 1000);
-    }
-    AccessibilityInfo.announceForAccessibility(lines[index]?.text ?? '');
-  }
+      if (synced) {
+        const timed = nearestTimedIndex(lines, index);
+        const startMs = timed >= 0 ? lines[timed].startMs : undefined;
+        if (startMs !== undefined) seekTo(startMs / 1000);
+      }
+      AccessibilityInfo.announceForAccessibility(lines[index]?.text ?? '');
+    },
+    [synced, lines],
+  );
 
   if (loading) {
     return (
@@ -232,36 +337,27 @@ export function AnimatedLyricsView({
         contentContainerStyle={styles.content}
       >
         {lines.map((line, index) => {
-          const focused = focusIndex >= 0 && index === focusIndex;
+          let lineState: LyricRowProps['state'];
+          if (!synced || focusIndex < 0) {
+            lineState = 'unsync';
+          } else if (index === focusIndex) {
+            lineState = 'active';
+          } else if (index < focusIndex) {
+            lineState = 'past';
+          } else {
+            lineState = 'future';
+          }
+
           return (
-            <Pressable
+            <LyricRow
               key={`${index}-${line.text}`}
-              onPress={() => focusLine(index)}
-              accessibilityRole="button"
-              accessibilityLabel={line.text || 'Baris kosong'}
-              accessibilityHint={synced ? 'Lompat ke bagian lagu ini' : undefined}
-              accessibilityState={{ selected: focused }}
-              style={({ pressed }) => [
-                styles.lineHit,
-                pressed && { opacity: 0.7, transform: [{ scale: 0.98 }] },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.line,
-                  {
-                    color: palette.text,
-                    fontSize: focused ? ACTIVE_SIZE : INACTIVE_SIZE,
-                    fontWeight: focused ? '800' : '700',
-                    lineHeight: focused ? 34 : 28,
-                    opacity: focusIndex < 0 ? 0.85 : focused ? 1 : 0.35,
-                    transform: [{ scale: focused ? 1.02 : 1 }],
-                  },
-                ]}
-              >
-                {line.text || ' '}
-              </Text>
-            </Pressable>
+              line={line}
+              index={index}
+              state={lineState}
+              palette={palette}
+              synced={synced}
+              onPress={focusLine}
+            />
           );
         })}
         {data.source ? (

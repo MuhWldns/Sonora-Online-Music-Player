@@ -16,6 +16,7 @@ import { SectionHeader } from '../Icon';
 import { ShelfCard } from '../TrackRow';
 import type { RootStackParamList } from '../../navigation/types';
 import { ensureLoaded, subscribeRecentlyPlayed } from '../../storage/recentlyPlayed';
+import { playSong } from '../../player/service';
 import { spacing } from '../../theme';
 import type { Palette } from '../../theme';
 import { buildAutomixPlaylists, extractMixPlaylists } from './mixPlaylists';
@@ -80,10 +81,15 @@ export function HomeMixForYouRow({ palette }: { palette: Palette }) {
 
   const onOpen = useCallback(
     (item: ParsedItem) => {
-      const id = item.playlistId ?? item.browseId;
-      if (id) {
-        navigation.navigate('Browse', { id, title: item.title });
+      // automix RDAMVM ids cannot be browsed — extract videoId and play directly
+      if (item.playlistId && !item.browseId) {
+        const rdMatch = item.playlistId.match(/^RDAMVM(.{11})$/);
+        const videoId = rdMatch ? rdMatch[1] : item.videoId;
+        if (videoId) playSong({ ...item, videoId }).catch(() => {});
+        return;
       }
+      const id = item.browseId ?? item.playlistId;
+      if (id) navigation.navigate('Browse', { id, title: item.title });
     },
     [navigation],
   );

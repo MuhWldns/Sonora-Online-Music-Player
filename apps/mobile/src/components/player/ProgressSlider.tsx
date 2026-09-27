@@ -73,7 +73,9 @@ export function ProgressSlider({
             styles.thumb,
             scrubbing !== null && styles.thumbActive,
             {
-              backgroundColor: palette.text,
+              backgroundColor: palette.accent,
+              borderColor: 'rgba(255,255,255,0.6)',
+              borderWidth: 2,
               left: trackW > 0 ? `${ratio * 100}%` : 0,
             },
           ]}

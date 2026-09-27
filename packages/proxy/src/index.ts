@@ -183,9 +183,9 @@ export function createApp(deps: AppDeps): Hono {
     const yt = await getDataInnertube(deps, cookieOf(c));
     const nextData = await rawExecute(yt, '/next', {
       videoId,
-      playlistId: `RDAMVM${videoId}`,
+      // watch-page format (no playlistId) exposes watchNextTabbedResultsRenderer
+      // which contains the lyrics tab browseId — automix-only payload suppresses it.
       isAudioOnly: true,
-      tunerSettingValue: 'AUTOMIX_SETTING_NORMAL',
       watchEndpointMusicSupportedConfigs: {
         watchEndpointMusicConfig: { musicVideoType: 'MUSIC_VIDEO_TYPE_ATV' },
       },

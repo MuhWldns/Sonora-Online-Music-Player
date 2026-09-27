@@ -8,7 +8,7 @@ import { Icon } from './Icon';
 import type { IconName } from './Icon';
 import { getState } from '../player/service';
 import { usePlayerState } from '../player/usePlayerState';
-import { spacing, typeScale } from '../theme';
+import { glass, spacing, typeScale } from '../theme';
 import type { Palette } from '../theme';
 import type { ParsedItem } from '../api/types';
 
@@ -130,7 +130,11 @@ export function ShelfCard({
         />
       ) : (
         <View
-          style={[square ? styles.cardImgSquare : styles.cardImgCircle, styles.cardFallback]}
+          style={[
+            square ? styles.cardImgSquare : styles.cardImgCircle,
+            styles.cardFallback,
+            { backgroundColor: glass.surface, borderWidth: 1, borderColor: glass.border },
+          ]}
         >
           <Icon name="album" size={28} color={palette.textSecondary} />
         </View>
@@ -179,7 +183,7 @@ const styles = StyleSheet.create({
   title: { fontSize: typeScale.body, fontWeight: '600' },
   subtitle: { fontSize: typeScale.label },
   dur: { fontSize: typeScale.label, fontVariant: ['tabular-nums'] },
-  card: { width: 152, gap: spacing.sm },
+  card: { width: 152, gap: spacing.sm, backgroundColor: glass.surface, borderRadius: 12, borderWidth: 1, borderColor: glass.border, padding: spacing.xs, overflow: 'hidden' },
   cardImgSquare: { width: 152, height: 152, borderRadius: 8 },
   cardImgCircle: { width: 152, height: 152, borderRadius: 76 },
   cardFallback: { alignItems: 'center', justifyContent: 'center' },

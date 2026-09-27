@@ -24,7 +24,7 @@ import {
   subscribeRecentlyPlayed,
   type RecentlyPlayed,
 } from '../../storage/recentlyPlayed';
-import { spacing, typeScale } from '../../theme';
+import { glass, spacing, typeScale } from '../../theme';
 import type { Palette } from '../../theme';
 
 const CARD_WIDTH = 132;
@@ -168,7 +168,7 @@ export function HomeRecentlyPlayedRow({ palette }: { palette: Palette }) {
 const styles = StyleSheet.create({
   block: { marginTop: spacing.lg },
   row: { paddingHorizontal: spacing.lg, gap: spacing.md },
-  card: { width: CARD_WIDTH, gap: spacing.sm },
+  card: { width: CARD_WIDTH, gap: spacing.sm, backgroundColor: glass.surface, borderRadius: 12, borderWidth: 1, borderColor: glass.border, padding: spacing.sm, overflow: 'hidden' },
   thumb: { width: THUMB_SIZE, height: THUMB_SIZE, borderRadius: 8 },
   thumbFallback: { alignItems: 'center', justifyContent: 'center' },
   thumbFallbackText: { fontSize: typeScale.titleLarge, fontWeight: '700' },
