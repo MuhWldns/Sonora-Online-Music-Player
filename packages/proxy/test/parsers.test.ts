@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { parseBrowseSections } from './parsers.js';
+import { parseBrowseSections } from '../src/parsers.js';
 
 test('parses playlist shelf items from a nested two-column browse response', () => {
   const sections = parseBrowseSections({

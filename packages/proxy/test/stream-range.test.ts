@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { upstreamRangeFor } from './stream-range.js';
+import { upstreamRangeFor } from '../src/stream-range.js';
 
 test('bounds a missing client range to the first relay chunk', () => {
   assert.equal(upstreamRangeFor(undefined), 'bytes=0-1048575');

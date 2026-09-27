@@ -113,11 +113,18 @@ export function HomeRecentlyPlayedRow({ palette }: { palette: Palette }) {
     }, [renderLocalOnly]),
   );
 
-  if (items.length === 0) return null;
+  if (items.length === 0) {
+    return (
+      <View style={styles.block}>
+        <SectionHeader title="Recently played" palette={palette} />
+        <Text style={[styles.emptyText, { color: palette.textSecondary }]}>Putar lagu untuk mulai mengisi riwayat</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.block}>
-      <SectionHeader title="Recently played" />
+      <SectionHeader title="Recently played" palette={palette} />
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -166,4 +173,5 @@ const styles = StyleSheet.create({
   thumbFallback: { alignItems: 'center', justifyContent: 'center' },
   thumbFallbackText: { fontSize: typeScale.titleLarge, fontWeight: '700' },
   title: { fontSize: typeScale.body, fontWeight: '600' },
+  emptyText: { paddingHorizontal: spacing.lg, fontSize: typeScale.body },
 });

@@ -24,7 +24,6 @@ import type { IconName } from './Icon';
 import { formatSec } from './TrackRow';
 import {
   getState,
-  getStatusDebug,
   moveQueueItem,
   nextTrack,
   playAt,
@@ -674,14 +673,6 @@ function FullPlayer({ palette, onClose }: { palette: Palette; onClose: () => voi
               </Text>
             ) : error ? (
               <Text style={[s.bufState, { color: palette.error }]}>Gagal memuat: {error}</Text>
-            ) : null}
-            {__DEV__ ? (
-              <Text
-                style={[s.bufState, { color: palette.textSecondary, fontSize: 10 }]}
-                numberOfLines={4}
-              >
-                dbg: {getStatusDebug()}
-              </Text>
             ) : null}
             <ProgressSlider
               currentTime={currentTime}

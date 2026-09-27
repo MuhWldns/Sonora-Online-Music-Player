@@ -13,7 +13,7 @@ import { Hono } from 'hono';
 import type { CacheAdapter } from './cache.js';
 import { createPlaybackInnertube, getDataInnertube, type InnertubeDeps } from './innertube.js';
 import type { Innertube as InnertubeInstance } from 'youtubei.js/agnostic';
-import { findAll, findFirst, parseBrowseSections, parseListItem, parseSections, parseTwoRow, text, thumbs, type ParsedItem } from './parsers.js';
+import { findAll, findFirst, parseBrowseSections, parseListItem, parseNextResponse, parseSections, parseTwoRow, text, thumbs, type ParsedItem } from './parsers.js';
 import { upstreamRangeFor } from './stream-range.js';
 
 export interface AppDeps extends InnertubeDeps {
@@ -170,23 +170,7 @@ export function createApp(deps: AppDeps): Hono {
         watchEndpointMusicConfig: { musicVideoType: 'MUSIC_VIDEO_TYPE_ATV' },
       },
     });
-    const queue = findAll<Record<string, never>>(data, 'playlistPanelVideoRenderer').map(
-      (p) => parsePanelItem(p),
-    );
-    // InnerTube embeds a continuation token (for paging the automix past the
-    // first ~25 items) under one of two renderers depending on layout. Prefer
-    // musicShelfContinuation (modern); fall back to the generic continuation
-    // item's watch/playlist endpoint.
-    const shelfCont = findFirst<{
-      contents?: { musicShelfContinuation?: { token?: string } }[];
-    }>(data, 'musicShelfRenderer');
-    const token =
-      shelfCont?.contents?.[0]?.musicShelfContinuation?.token ??
-      findFirst<{ token?: string }>(data, 'musicShelfContinuation')?.token ??
-      findFirst<{
-        endpoint?: { continuationCommand?: { token?: string } };
-      }>(data, 'continuationItemRenderer')?.endpoint?.continuationCommand?.token;
-    return c.json({ queue, continuation: token });
+    return c.json(parseNextResponse(data));
   });
 
   app.get('/next/continue', async (c) => {
@@ -194,10 +178,7 @@ export function createApp(deps: AppDeps): Hono {
     if (!token) return c.json({ error: 'missing token' }, 400);
     const yt = await getDataInnertube(deps, cookieOf(c));
     const data = await rawExecute(yt, '/next', { continuation: token });
-    const queue = findAll<Record<string, never>>(data, 'playlistPanelVideoRenderer').map(
-      (p) => parsePanelItem(p),
-    );
-    return c.json({ queue });
+    return c.json(parseNextResponse(data));
   });
 
   /** Stream URL untuk react-native-track-player (fetch langsung dari
@@ -366,16 +347,6 @@ function parseCardShelf(top: Record<string, unknown>) {
   };
 }
 
-function parsePanelItem(p: Record<string, unknown>) {
-  return {
-    videoId: p.videoId as string,
-    title: text(p.title as never),
-    artist: text((p.shortBylineText ?? p.longBylineText) as never),
-    duration: text(p.lengthText as never),
-    thumbnail: thumbs(p.thumbnail),
-    selected: !!p.selected,
-  };
-}
 
 /** Playlist id perlu prefix VL untuk endpoint browse. */
 function normalizeBrowseId(id: string): string {

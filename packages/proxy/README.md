@@ -39,10 +39,17 @@ Pembagian kerja internal (hasil PoC):
 | `GET /search` | `q`, `filter=song\|video\|album\|artist\|playlist` | cache 10 menit |
 | `GET /home` | — | cache 5 menit; key personal vs anon terpisah |
 | `GET /library` | — | **401 tanpa** `x-yt-cookie` |
-| `GET /browse` | `id` | album/artist/playlist detail, including nested playlist shelves |
-| `GET /next` | `videoId` | radio queue (50 item) |
+| `GET /next` | `videoId` | radio queue (up to 50 items), with YTM continuation when supplied |
+| `GET /next/continue` | `token` | next YTM-ordered radio page, with its following continuation when supplied |
 | `GET /player` | `videoId` | URL stream deciphered (metadata + bitrate + mime) |
 | `GET /stream` | `videoId` | **relay fallback** — audio bytes lewat server |
+
+Radio paging is deliberately upstream-controlled: the proxy parses the queue and
+the next InnerTube continuation token but never shuffles or mixes local seeds.
+The mobile player appends unseen rows in that order, up to 100 queued tracks. If
+a continuation is missing or expires at a low tail, it makes one guarded
+`/next` reseed from the currently active video; this preserves YouTube Music's
+algorithmic ordering but does not guarantee more diverse recommendations.
 
 ## Dev (lokal, tanpa Docker)
 

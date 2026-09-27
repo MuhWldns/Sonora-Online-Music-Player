@@ -139,6 +139,7 @@ export function SearchScreen({ palette }: { palette: Palette }) {
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
+        style={styles.chipsViewport}
         contentContainerStyle={styles.chips}
       >
         {FILTERS.map((f) => {
@@ -147,6 +148,7 @@ export function SearchScreen({ palette }: { palette: Palette }) {
             <Pressable
               key={f.label}
               onPress={() => setFilter(f.id)}
+              hitSlop={{ top: 6, bottom: 6 }}
               accessibilityRole="button"
               accessibilityLabel={`Filter ${f.label}`}
               style={({ pressed }) => [
@@ -249,12 +251,13 @@ const styles = StyleSheet.create({
     height: TOUCH_TARGET,
   },
   input: { flex: 1, fontSize: typeScale.body, paddingVertical: 0 },
+  chipsViewport: { height: 52 },
   chips: { paddingHorizontal: spacing.lg, gap: spacing.sm, paddingVertical: spacing.sm },
   chip: {
+    height: 36,
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm - 2,
-    borderRadius: radius.sm,
-    minHeight: 36,
+    borderRadius: radius.full,
+    alignSelf: 'center',
     alignItems: 'center',
     justifyContent: 'center',
   },

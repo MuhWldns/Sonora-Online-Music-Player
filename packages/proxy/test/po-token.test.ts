@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { CachedPoTokenProvider } from './po-token.js';
+import { CachedPoTokenProvider } from '../src/po-token.js';
 
 test('deduplicates concurrent token minting for one video', async () => {
   let calls = 0;

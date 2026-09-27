@@ -75,7 +75,7 @@ export function BrowseScreen({ navigation, route, palette }: Props) {
     if (item.kind === 'shelf')
       return (
         <View style={styles.block}>
-          <SectionHeader title={item.section.title} />
+          <SectionHeader title={item.section.title} palette={palette} />
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.shelf}>
             {item.section.items.map((entry, index) => (
               <ShelfCard key={`${entry.title}-${index}`} item={entry} onOpen={open} palette={palette} />
@@ -85,7 +85,7 @@ export function BrowseScreen({ navigation, route, palette }: Props) {
       );
     return (
       <View style={styles.block}>
-        <SectionHeader title={item.section.title} />
+        <SectionHeader title={item.section.title} palette={palette} />
         {item.section.items.map((entry, index) => (
           <SongRow
             key={`${entry.videoId ?? entry.title}-${index}`}

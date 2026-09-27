@@ -114,7 +114,7 @@ export function HomeScreen({ palette }: { palette: Palette }) {
     if (item.kind === 'shelf')
       return (
         <View style={styles.shelfBlock}>
-          <SectionHeader title={item.section.title} />
+          <SectionHeader title={item.section.title} palette={palette} />
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
@@ -128,7 +128,7 @@ export function HomeScreen({ palette }: { palette: Palette }) {
       );
     return (
       <View style={styles.songsBlock}>
-        <SectionHeader title={item.section.title} />
+        <SectionHeader title={item.section.title} palette={palette} />
         {item.section.items.slice(0, 6).map((it, i) => (
           <SongRow
             key={`${it.videoId ?? it.title}-${i}`}

@@ -241,3 +241,16 @@ while the app was backgrounded and after its task had been removed from recents.
 - Verify playback with both app state and native state. A visible mini-player is not proof that an Android `AudioTrack` started.
 - Use `/healthz` on the proxy URL configured for the environment before playback tests.
 - Do not await a `serializeMutation` op from inside another one; the inner op would wait on the outer op forever.
+
+### H. Radio continuation stays in YouTube Music order
+
+**Status:** fixed in 1.5.0.
+
+`/next` and `/next/continue` now share one raw InnerTube parser that returns
+both the page's queue and its next continuation token. The mobile player chains
+that token, appends only unseen video IDs in upstream order, and caps the live
+queue at 100 tracks. When the token is absent or expired while the upcoming
+tail is five tracks or fewer, it makes at most one guarded `/next` reseed from
+the active video. The guard clears when playback changes active video or a
+fresh page adds tracks/token. No local shuffle or multi-seed mix is used, and
+YouTube Music's algorithm does not guarantee recommendation diversity.

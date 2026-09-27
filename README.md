@@ -41,11 +41,17 @@ The proxy runs as a Docker container on a self-hosted Node.js server. Authentica
 | `GET /home` | — | home feed, personalized when cookie sent (5 min cache) |
 | `GET /library` | — | account library — **requires** `x-yt-cookie` |
 | `GET /browse` | `id` | album / artist / playlist details |
-| `GET /next` | `videoId` | radio queue (up to 50 items) |
+| `GET /next` | `videoId` | radio queue (up to 50 items) plus its YTM continuation token |
+| `GET /next/continue` | `token` | next queue page plus its YTM continuation token |
 | `GET /player` | `videoId` | deciphered stream URL + metadata |
 | `GET /stream` | `videoId` | relay fallback — audio bytes streamed via server |
 
 Account cookie is passed per-request via the `x-yt-cookie` header and is never stored server-side.
+Radio recommendations remain in YouTube Music's algorithmic order. The client
+chains continuation pages, deduplicates by video ID, and caps its live queue at
+100 tracks. If a continuation is missing or expires near the tail, it performs
+one guarded reseed from the active track; it does not locally shuffle or mix
+multiple seeds, and no recommendation diversity is guaranteed.
 
 ## Getting started
 

@@ -7,7 +7,7 @@ import type {
 } from '../../modules/sonora-media-controls/src/SonoraMediaControlsModule';
 
 import { next, nextContinue as nextContinueApi, streamUrl } from '../api/client';
-import type { ParsedItem, QueueItem } from '../api/types';
+import type { NextResponse, ParsedItem, QueueItem } from '../api/types';
 import { recordPlayed } from '../storage/recentlyPlayed';
 
 export interface PlayerTrack {
@@ -43,7 +43,6 @@ let state: PlayerState = {
 const listeners = new Set<() => void>();
 let setupPromise: Promise<void> | null = null;
 let queueGeneration = 0;
-let lastStatus = 'no status events yet';
 let lastRecordedVideoId: string | null = null;
 
 /** Continuation paging for /next. Each call to /next seeds the queue and
@@ -52,14 +51,35 @@ let lastRecordedVideoId: string | null = null;
  *
  *  The throttle prevents spam when the user advances quickly through a
  *  short tail. MIN_CONTINUE_INTERVAL_MS matches the cadence YTM client
- *  uses internally; tight enough to refill, loose enough to avoid the
- *  continuation endpoint rejecting rapid requests. */
+ *  uses internally; tight enough to refill, loose enough to avoid
+ *  continuation/reseed retry loops. */
 const MIN_CONTINUE_INTERVAL_MS = 4000;
 const CONTINUE_THRESHOLD = 5;
 const MAX_QUEUE = 100;
 let nextContinuationToken: string | null = null;
 let lastNextContinueAt = 0;
+let reseedAttemptVideoId: string | null = null;
+let reseedActiveVideoId: string | null = null;
+let nextRequestInFlightGeneration: number | null = null;
+let radioSeedInFlightGeneration: number | null = null;
 
+function resetContinuationState(): void {
+  nextContinuationToken = null;
+  lastNextContinueAt = 0;
+  reseedAttemptVideoId = null;
+  reseedActiveVideoId = null;
+  nextRequestInFlightGeneration = null;
+  radioSeedInFlightGeneration = null;
+}
+function syncReseedActive(): string | null {
+  const activeVideoId = state.index >= 0 ? state.queue[state.index]?.videoId ?? null : null;
+  if (activeVideoId !== reseedActiveVideoId) {
+    reseedActiveVideoId = activeVideoId;
+    reseedAttemptVideoId = null;
+  }
+  return activeVideoId;
+
+}
 function emit(patch: Partial<PlayerState>): void {
   state = { ...state, ...patch };
   listeners.forEach((listener) => listener());
@@ -71,10 +91,6 @@ function errorMessage(error: unknown): string {
 
 function onStatus(status: PlaybackStatus): void {
   const track = state.queue[status.index];
-  lastStatus =
-    `index=${status.index} play=${status.playing} buf=${status.buffering}` +
-    ` t=${status.currentTime.toFixed(1)} d=${status.duration.toFixed(1)}` +
-    (status.error ? ` ERR=${status.error}` : '');
   emit({
     index: status.index,
     playing: status.playing,
@@ -105,15 +121,14 @@ function onStatus(status: PlaybackStatus): void {
     });
   }
 
-  // Auto-page the automix when the upcoming tail runs low. The trigger is
-  // the residual queue AFTER the current track, not the raw queue length;
-  // we only care how many tracks remain until the user runs out. We use the
-  // post-emit state so the threshold reflects what listeners see.
+  // Auto-page or reseed the automix when the upcoming tail runs low. The
+  // trigger is the residual queue AFTER the current track, not raw length.
+  syncReseedActive();
   if (
     state.queue.length > 0 &&
     state.index >= 0 &&
     state.queue.length - state.index - 1 <= CONTINUE_THRESHOLD &&
-    nextContinuationToken !== null
+    radioSeedInFlightGeneration !== queueGeneration
   ) {
     void nextContinue();
   }
@@ -128,9 +143,6 @@ export function getState(): PlayerState {
   return state;
 }
 
-export function getStatusDebug(): string {
-  return lastStatus;
-}
 
 export async function setupPlayer(): Promise<void> {
   if (!setupPromise) {
@@ -175,28 +187,30 @@ function serializeMutation<T>(op: () => Promise<T>): Promise<T> {
 }
 
 async function replaceQueue(queue: PlayerTrack[], startIndex: number): Promise<void> {
+  const pendingRadioSeed = radioSeedInFlightGeneration === queueGeneration + 1;
+  const boundedQueue = queue.slice(0, MAX_QUEUE);
+  const boundedStart = Math.max(0, Math.min(startIndex, boundedQueue.length - 1));
   const generation = ++queueGeneration;
+  resetContinuationState();
+  radioSeedInFlightGeneration = pendingRadioSeed ? generation : null;
   // Optimistic emit so the player reflects the new track immediately.
   emit({
-    queue,
-    index: startIndex,
+    queue: boundedQueue,
+    index: boundedStart,
     playing: false,
     buffering: true,
     currentTime: 0,
-    duration: baseTrackDuration(queue[startIndex]),
+    duration: baseTrackDuration(boundedQueue[boundedStart]),
     error: null,
   });
 
   try {
     await setupPlayer();
-    const tracks = await Promise.all(queue.map(nativeTrack));
+    const tracks = await Promise.all(boundedQueue.map(nativeTrack));
     await serializeMutation(async () => {
       if (generation !== queueGeneration) return;
-      // JS and native mutate inside ONE serialized slot. Emitting outside it
-      // let a queued insert land between the emit and the native call, which
-      // left state.queue and the Media3 queue permanently different.
-      emit({ queue, index: startIndex, buffering: true, currentTime: 0 });
-      await MediaControls.replaceQueue(tracks, startIndex);
+      emit({ queue: boundedQueue, index: boundedStart, buffering: true, currentTime: 0 });
+      await MediaControls.replaceQueue(tracks, boundedStart);
     });
   } catch (error) {
     if (generation !== queueGeneration) return;
@@ -237,106 +251,124 @@ function trackFromQueueItem(item: QueueItem): PlayerTrack {
   };
 }
 
+async function appendRadioQueue(
+  result: Pick<NextResponse, 'queue'>,
+  generation: number,
+): Promise<number> {
+  if (generation !== queueGeneration || state.queue.length >= MAX_QUEUE) return 0;
+  const candidates = result.queue
+    .filter((queued) => !queued.selected)
+    .map(trackFromQueueItem);
+  const slots = MAX_QUEUE - state.queue.length;
+  if (!candidates.length || slots <= 0) return 0;
+
+  // Resolve all upstream candidates, then dedupe inside the serialized slot.
+  // Slicing before dedupe could spend the cap on rows already in the queue and
+  // discard later unseen rows that preserve YTM order.
+  const toResolve = candidates;
+  const resolved = await Promise.all(toResolve.map(nativeTrack));
+  if (generation !== queueGeneration) return 0;
+
+  return serializeMutation(async () => {
+    if (generation !== queueGeneration) return 0;
+    const existing = new Set(state.queue.map((track) => track.videoId));
+    const freshTracks: PlayerTrack[] = [];
+    const freshNative: NativeTrack[] = [];
+    const slotsLeft = MAX_QUEUE - state.queue.length;
+    toResolve.forEach((track, i) => {
+      if (existing.has(track.videoId) || freshTracks.length >= slotsLeft) return;
+      existing.add(track.videoId);
+      freshTracks.push(track);
+      freshNative.push(resolved[i]);
+    });
+    if (!freshTracks.length) return 0;
+
+    await MediaControls.appendTracks(freshNative);
+    emit({ queue: [...state.queue, ...freshTracks] });
+    return freshTracks.length;
+  });
+}
+
+function setContinuation(result: NextResponse, generation: number): void {
+  if (generation !== queueGeneration) return;
+  nextContinuationToken = result.continuation ?? null;
+  // A fresh token is useful progress even if this page had no new rows.
+  if (result.continuation) reseedAttemptVideoId = null;
+}
+
 /** Play immediately, then extend the same native queue with radio results. */
 export async function playSong(item: ParsedItem): Promise<void> {
   if (!item.videoId) return;
   const first = trackFromItem(item);
+  // replaceQueue increments queueGeneration synchronously before its first
+  // await, so mark the upcoming generation before native setup can emit a
+  // low-tail status event.
+  radioSeedInFlightGeneration = queueGeneration + 1;
   await replaceQueue([first], 0);
   const generation = queueGeneration;
+  radioSeedInFlightGeneration = generation;
 
   try {
     const result = await next(item.videoId);
     if (generation !== queueGeneration) return;
-
-    const candidates = result.queue
-      .filter((queued) => !queued.selected)
-      .map(trackFromQueueItem);
-    const resolved = await Promise.all(candidates.map(nativeTrack));
+    const freshCount = await appendRadioQueue(result, generation);
     if (generation !== queueGeneration) return;
-
-    // Dedupe, JS emit, and the native append all happen in ONE serialized
-    // slot. Recomputing the snapshot here (not before) means a concurrent
-    // addToQueue that already inserted a track cannot be duplicated.
-    await serializeMutation(async () => {
-      if (generation !== queueGeneration) return;
-      const existing = new Set(state.queue.map((track) => track.videoId));
-      const freshTracks: PlayerTrack[] = [];
-      const freshNative: NativeTrack[] = [];
-      candidates.forEach((track, i) => {
-        if (existing.has(track.videoId)) return;
-        existing.add(track.videoId);
-        freshTracks.push(track);
-        freshNative.push(resolved[i]);
-      });
-      if (!freshTracks.length) return;
-
-      emit({ queue: [...state.queue, ...freshTracks] });
-      await MediaControls.appendTracks(freshNative);
-    });
-    // Stash the continuation token so onStatus can page more tracks when
-    // the tail runs low. A new playSong replaces this with the new seed's
-    // token; never both at once because playSong awaits replaceQueue first
-    // (queueGeneration bump) before /next fires.
-    if (generation === queueGeneration) {
-      nextContinuationToken = result.continuation ?? null;
-      lastNextContinueAt = Date.now();
-    }
+    setContinuation(result, generation);
+    lastNextContinueAt = Date.now();
+    if (freshCount > 0) reseedAttemptVideoId = null;
   } catch {
-    // Radio seeding is optional; the selected track remains playable.
+    // Radio seeding is optional; the selected track remains playable. The
+    // low-tail path may make one guarded active-track reseed later.
+  } finally {
+    if (radioSeedInFlightGeneration === generation) radioSeedInFlightGeneration = null;
   }
 }
 
-/** Page the current automix past its tail using the stashed continuation
- *  token. Throttled, capped, dedup'd — same shape as the radio-seed append
- *  in playSong but keyed on the cached token instead of a fresh /next.
- *
- *  No-ops (silently) when: no token, queue already at cap, throttle window
- *  not yet elapsed, or a queue mutation is in flight (serializeMutation
- *  guarantees serialization regardless). */
+/** Page the current automix, falling back to one active-track seed when its
+ * token is absent/expired. All rows remain in upstream order; no local mix. */
 export async function nextContinue(): Promise<void> {
-  if (!nextContinuationToken) return;
-  if (Date.now() - lastNextContinueAt < MIN_CONTINUE_INTERVAL_MS) return;
+  const activeVideoId = syncReseedActive();
+  if (!activeVideoId || state.queue.length - state.index - 1 > CONTINUE_THRESHOLD) return;
   if (state.queue.length >= MAX_QUEUE) return;
+  if (Date.now() - lastNextContinueAt < MIN_CONTINUE_INTERVAL_MS) return;
 
-  const token = nextContinuationToken;
   const generation = queueGeneration;
+  if (nextRequestInFlightGeneration === generation) return;
+  const continuation = nextContinuationToken;
+  const reseed = continuation === null;
+  if (reseed && reseedAttemptVideoId === activeVideoId) return;
+
   lastNextContinueAt = Date.now();
+  nextRequestInFlightGeneration = generation;
+  if (reseed) reseedAttemptVideoId = activeVideoId;
 
   try {
-    const result = await nextContinueApi(token);
+    let result: NextResponse;
+    if (continuation) {
+      try {
+        result = await nextContinueApi(continuation);
+      } catch {
+        // An expired/single-use token must not be retried. Reseed once below.
+        if (generation !== queueGeneration || reseedAttemptVideoId === activeVideoId) return;
+        nextContinuationToken = null;
+        reseedAttemptVideoId = activeVideoId;
+        result = await next(activeVideoId);
+      }
+    } else {
+      result = await next(activeVideoId);
+    }
     if (generation !== queueGeneration) return;
 
-    const candidates = result.queue
-      .filter((queued) => !queued.selected)
-      .map(trackFromQueueItem);
-    if (!candidates.length) return;
-
-    const resolved = await Promise.all(candidates.map(nativeTrack));
+    const freshCount = await appendRadioQueue(result, generation);
     if (generation !== queueGeneration) return;
-
-    await serializeMutation(async () => {
-      if (generation !== queueGeneration) return;
-      const existing = new Set(state.queue.map((track) => track.videoId));
-      const freshTracks: PlayerTrack[] = [];
-      const freshNative: NativeTrack[] = [];
-      const slotsLeft = MAX_QUEUE - state.queue.length;
-      candidates.forEach((track, i) => {
-        if (existing.has(track.videoId)) return;
-        existing.add(track.videoId);
-        if (freshTracks.length >= slotsLeft) return; // honor hard cap
-        freshTracks.push(track);
-        freshNative.push(resolved[i]);
-      });
-      if (!freshTracks.length) return;
-
-      emit({ queue: [...state.queue, ...freshTracks] });
-      await MediaControls.appendTracks(freshNative);
-    });
-    // YTM continuation tokens are single-use; once consumed, drop it so
-    // we don't re-fire the same page. A future /next (new seed) replaces it.
-    if (generation === queueGeneration) nextContinuationToken = null;
+    setContinuation(result, generation);
+    if (freshCount > 0) reseedAttemptVideoId = null;
+    else if (!result.continuation) reseedAttemptVideoId = activeVideoId;
   } catch {
-    // Auto-paging is best-effort; queue keeps playing what it has.
+    // The per-active-video guard prevents status events from tight-retrying a
+    // failed reseed. It clears when playback advances to another active id.
+  } finally {
+    if (nextRequestInFlightGeneration === generation) nextRequestInFlightGeneration = null;
   }
 }
 

@@ -266,3 +266,76 @@ export function parseBrowseSections(data: unknown): ParsedSection[] {
   const sections = lists.flatMap((list) => parseSections(list.contents ?? []));
   return sections.filter((section, index) => sections.findIndex((s) => s.title === section.title) === index);
 }
+export interface NextQueueItem {
+  videoId: string;
+  title: string;
+  artist: string;
+  duration: string;
+  thumbnail: string | null;
+  selected: boolean;
+}
+
+export interface ParsedNextResponse {
+  queue: NextQueueItem[];
+  continuation?: string;
+}
+
+function stringField(value: unknown, field: string): string | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const candidate = (value as Record<string, unknown>)[field];
+  return typeof candidate === 'string' && candidate.length > 0 ? candidate : undefined;
+}
+
+/**
+ * InnerTube uses several renderer/container names for the same automix
+ * continuation. Keep the token extraction beside queue parsing so /next and
+ * /next/continue cannot drift as response layouts change.
+ */
+function nextContinuation(data: unknown): string | undefined {
+  for (const continuation of findAll<Record<string, unknown>>(data, 'musicShelfContinuation')) {
+    const token = stringField(continuation, 'token');
+    if (token) return token;
+  }
+
+  for (const item of findAll<Record<string, unknown>>(data, 'continuationItemRenderer')) {
+    for (const endpointKey of ['endpoint', 'continuationEndpoint']) {
+      const endpoint = item[endpointKey];
+      if (!endpoint || typeof endpoint !== 'object' || Array.isArray(endpoint)) continue;
+      const command = (endpoint as Record<string, unknown>).continuationCommand;
+      const token = stringField(command, 'token');
+      if (token) return token;
+    }
+  }
+
+  for (const command of findAll<Record<string, unknown>>(data, 'continuationCommand')) {
+    const token = stringField(command, 'token');
+    if (token) return token;
+  }
+
+  for (const nextData of findAll<Record<string, unknown>>(data, 'nextContinuationData')) {
+    const token = stringField(nextData, 'continuation') ?? stringField(nextData, 'token');
+    if (token) return token;
+  }
+
+  return undefined;
+}
+
+function parsePanelItem(p: Record<string, unknown>): NextQueueItem {
+  return {
+    videoId: p.videoId as string,
+    title: text(p.title as Runs),
+    artist: text((p.shortBylineText ?? p.longBylineText) as Runs),
+    duration: text(p.lengthText as Runs),
+    thumbnail: thumbs(p.thumbnail),
+    selected: !!p.selected,
+  };
+}
+
+/** Parse both the queue page and the token for the following upstream page. */
+export function parseNextResponse(data: unknown): ParsedNextResponse {
+  const queue = findAll<Record<string, unknown>>(data, 'playlistPanelVideoRenderer').map(
+    (panel) => parsePanelItem(panel),
+  );
+  const continuation = nextContinuation(data);
+  return continuation ? { queue, continuation } : { queue };
+}

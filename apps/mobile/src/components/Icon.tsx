@@ -6,7 +6,8 @@ import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import type { GestureResponderEvent } from 'react-native';
 
-import { TOUCH_TARGET, spacing } from '../theme';
+import { spacing, TOUCH_TARGET } from '../theme';
+import type { Palette } from '../theme';
 
 export type IconName = keyof typeof MaterialIcons.glyphMap;
 
@@ -53,8 +54,8 @@ export function IconButton({
 }
 
 /** Section header: Spotify-canon large shelf title, no eyebrow/kicker. */
-export function SectionHeader({ title }: { title: string }) {
-  return <Text style={styles.sectionTitle}>{title}</Text>;
+export function SectionHeader({ title, palette }: { title: string; palette: Palette }) {
+  return <Text style={[styles.sectionTitle, { color: palette.text }]}>{title}</Text>;
 }
 
 const styles = StyleSheet.create({

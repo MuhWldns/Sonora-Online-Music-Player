@@ -9,6 +9,7 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server/node.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test test/*.test.ts",
     "deploy:cf": "wrangler deploy",
     "dev:cf": "wrangler dev",
     "check:cf": "wrangler deploy --dry-run"

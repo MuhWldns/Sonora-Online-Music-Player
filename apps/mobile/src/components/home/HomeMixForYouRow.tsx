@@ -52,7 +52,7 @@ export function HomeMixForYouRow({ palette }: { palette: Palette }) {
 
   return (
     <View style={styles.block}>
-      <SectionHeader title={title} />
+      <SectionHeader title={title} palette={palette} />
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}

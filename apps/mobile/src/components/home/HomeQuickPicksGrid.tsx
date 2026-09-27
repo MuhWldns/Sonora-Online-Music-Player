@@ -30,7 +30,7 @@ export function HomeQuickPicksGrid({ palette }: { palette: Palette }) {
 
   return (
     <View style={styles.block}>
-      <SectionHeader title="Pilihan cepat" />
+      <SectionHeader title="Pilihan cepat" palette={palette} />
       <View style={styles.grid}>
         {visible.map((item) => (
           <Pressable

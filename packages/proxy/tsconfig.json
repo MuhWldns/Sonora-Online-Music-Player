@@ -15,6 +15,6 @@
     "outDir": "dist",
     "rootDir": "."
   },
-  "include": ["src/**/*.ts", "server/**/*.ts", "worker-configuration.d.ts"],
+  "include": ["src/**/*.ts", "test/**/*.ts", "server/**/*.ts", "worker-configuration.d.ts"],
   "exclude": ["node_modules", "dist"]
 }
