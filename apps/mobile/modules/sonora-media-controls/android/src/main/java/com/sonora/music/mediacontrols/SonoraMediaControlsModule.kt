@@ -148,11 +148,25 @@ class SonoraMediaControlsModule : Module() {
 
     OnDestroy {
       handler.removeCallbacks(progressUpdate)
-      controller?.removeListener(playerListener)
-      controller?.release()
-      controllerFuture?.cancel(true)
+      // MediaController memaksa thread aplikasi: OnDestroy bisa jalan di
+      // thread pool saat reload, jadi lepas listener + release via handler.
+      val doomedController = controller
+      val doomedFuture = controllerFuture
       controller = null
       controllerFuture = null
+      handler.post {
+        if (doomedController != null) {
+          try {
+            doomedController.removeListener(playerListener)
+          } catch (_: Exception) {
+          }
+          try {
+            doomedController.release()
+          } catch (_: Exception) {
+          }
+        }
+        doomedFuture?.cancel(true)
+      }
     }
   }
 

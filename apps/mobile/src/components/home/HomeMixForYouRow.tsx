@@ -81,14 +81,18 @@ export function HomeMixForYouRow({ palette }: { palette: Palette }) {
 
   const onOpen = useCallback(
     (item: ParsedItem) => {
-      // Local automix only: RDAMVM{videoId} cannot be browsed, play directly.
-      if (item.playlistId?.startsWith('RDAMVM') && !item.browseId) {
+      // Radio mix (RD*) tidak punya halaman browse — mulai sebagai stasiun.
+      // Automix lokal menanam seed (RDAMVM{videoId}); mix server yang bawa
+      // seed videoId mulai dari situ. Radio tanpa seed fallback ke Browse.
+      if (item.playlistId?.startsWith('RD') && !item.browseId) {
         const rdMatch = item.playlistId.match(/^RDAMVM(.{11})$/);
-        const videoId = rdMatch ? rdMatch[1] : item.videoId;
-        if (videoId) playSong({ ...item, videoId }).catch(() => {});
-        return;
+        const videoId = rdMatch?.[1] ?? item.videoId;
+        if (videoId) {
+          playSong({ ...item, videoId }).catch(() => {});
+          return;
+        }
       }
-      // Server mixes (playlistId and/or browseId) open as a Browse page.
+      // Album, artis, dan playlist tersimpan (browseId atau id PL) buka halaman.
       const id = item.browseId ?? item.playlistId;
       if (id) navigation.navigate('Browse', { id, title: item.title });
     },
