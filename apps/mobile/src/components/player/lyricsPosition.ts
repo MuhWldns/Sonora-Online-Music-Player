@@ -9,6 +9,8 @@ export interface TimedLine {
   endMs?: number;
 }
 
+export const LYRIC_LOOKAHEAD_MS = 200;
+
 /**
  * Index of the line that owns `positionMs`: the last line whose startMs is
  * at or before the position. Lines without timing are skipped but still
@@ -30,19 +32,37 @@ export function activeLineIndex(lines: readonly TimedLine[], positionMs: number)
 }
 
 /**
- * Vertical scroll offset that centers line `index` in the viewport, given a
- * fixed line pitch (row height incl. gap) and the top padding of the content.
- * Clamped to zero so the first lines never pull above the content origin.
+ * Compact player preview text. Synced lyrics follow playback; plain lyrics use
+ * their first non-empty line because they have no timeline to follow.
+ */
+export function lyricPreviewText(
+  lines: readonly TimedLine[],
+  synced: boolean,
+  positionMs: number,
+): string {
+  if (!synced) {
+    for (const line of lines) {
+      const text = line.text.trim();
+      if (text) return text;
+    }
+    return '';
+  }
+
+  const index = activeLineIndex(lines, positionMs + LYRIC_LOOKAHEAD_MS);
+  return index >= 0 ? lines[index].text.trim() : '';
+}
+
+/**
+ * Vertical scroll offset that centers a measured row in the viewport.
+ * Clamped to zero so rows near the content origin never scroll above it.
  */
 export function focusScrollOffset(
-  index: number,
-  linePitch: number,
+  lineTop: number,
+  lineHeight: number,
   viewportHeight: number,
-  topPadding: number,
 ): number {
-  if (index < 0 || linePitch <= 0 || viewportHeight <= 0) return 0;
-  const lineCenter = topPadding + index * linePitch + linePitch / 2;
-  return Math.max(0, lineCenter - viewportHeight / 2);
+  if (lineHeight <= 0 || viewportHeight <= 0) return 0;
+  return Math.max(0, lineTop + lineHeight / 2 - viewportHeight / 2);
 }
 
 /**

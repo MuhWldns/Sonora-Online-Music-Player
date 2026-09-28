@@ -9,7 +9,7 @@
  *   future  (not yet)      → opacity 0.45, scale 1.0,  size 20/700
  *   no sync                → opacity 0.85 all,         size 20/700
  */
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
   ActivityIndicator,
@@ -20,32 +20,27 @@ import {
   StyleSheet,
   Text,
   View,
+  type LayoutChangeEvent,
 } from 'react-native';
 
-import { lyrics as fetchLyrics } from '../../api/client';
-import type { Lyrics, LyricsLine } from '../../api/types';
+import type { LyricsLine } from '../../api/types';
 import { seekTo } from '../../player/service';
 import { glass, radius, spacing, TOUCH_TARGET, typeScale } from '../../theme';
 import type { Palette } from '../../theme';
-import { activeLineIndex, focusScrollOffset, nearestTimedIndex } from './lyricsPosition';
-
-/** Handle returned by setTimeout — named to avoid ReturnType<typeof ...>. */
-type TimeoutHandle = number;
-
-/** Module-level lyrics cache: survives view switches inside a session. */
-const lyricsCache = new Map<string, Lyrics | null>();
+import {
+  activeLineIndex,
+  focusScrollOffset,
+  LYRIC_LOOKAHEAD_MS,
+  nearestTimedIndex,
+} from './lyricsPosition';
+import type { LyricsResource } from './useLyricsResource';
 /** Kinetic type roles (spec): active 26/800 full white, inactive 20/700 dim. */
 const ACTIVE_SIZE = 26;
 const INACTIVE_SIZE = 20;
-/** Approximate rendered line pitch used for scroll-centering math. */
-const LINE_PITCH = 44;
-const CONTENT_TOP_PADDING = spacing.xxl;
 
-/** Durations for opacity/scale transitions in ms. */
+/** Durations for opacity transitions in ms. */
 const FADE_IN_MS = 180;
 const FADE_OUT_MS = 320;
-const SCALE_IN_MS = 200;
-const SCALE_OUT_MS = 280;
 
 // ─── Per-line animated row ──────────────────────────────────────────────────
 
@@ -55,7 +50,14 @@ interface LyricRowProps {
   state: 'active' | 'past' | 'future' | 'unsync';
   palette: Palette;
   synced: boolean;
+  reduceMotion: boolean;
   onPress: (index: number) => void;
+  onRowLayout: (index: number, y: number, height: number) => void;
+}
+
+interface RowGeometry {
+  y: number;
+  height: number;
 }
 
 const TARGET_OPACITY: Record<LyricRowProps['state'], number> = {
@@ -77,21 +79,50 @@ const LyricRow = memo(function LyricRow({
   state,
   palette,
   synced,
+  reduceMotion,
   onPress,
+  onRowLayout,
 }: LyricRowProps) {
   const opacity = useRef(new Animated.Value(TARGET_OPACITY[state])).current;
   const scale = useRef(new Animated.Value(TARGET_SCALE[state])).current;
+  const focus = useRef(new Animated.Value(state === 'active' ? 1 : 0)).current;
+  const pressScale = useRef(new Animated.Value(1)).current;
   const prevState = useRef(state);
+  const focusTranslateX = useMemo(
+    () => focus.interpolate({ inputRange: [0, 1], outputRange: [0, spacing.lg] }),
+    [focus],
+  );
+  const markerScaleX = useMemo(
+    () => focus.interpolate({ inputRange: [0, 1], outputRange: [0.25, 1] }),
+    [focus],
+  );
+  const ripple = useMemo(
+    () => (reduceMotion ? undefined : { color: palette.surfaceVariant, borderless: false }),
+    [reduceMotion, palette.surfaceVariant],
+  );
 
   useEffect(() => {
+    const toOpacity = TARGET_OPACITY[state];
+    const toScale = TARGET_SCALE[state];
+    const toFocus = state === 'active' ? 1 : 0;
+
+    if (reduceMotion) {
+      opacity.stopAnimation();
+      scale.stopAnimation();
+      focus.stopAnimation();
+      pressScale.stopAnimation();
+      opacity.setValue(toOpacity);
+      scale.setValue(toScale);
+      focus.setValue(toFocus);
+      pressScale.setValue(1);
+      prevState.current = state;
+      return;
+    }
     if (prevState.current === state) return;
     prevState.current = state;
 
-    const toOpacity = TARGET_OPACITY[state];
-    const toScale = TARGET_SCALE[state];
     const activating = state === 'active';
-
-    Animated.parallel([
+    const transition = Animated.parallel([
       Animated.timing(opacity, {
         toValue: toOpacity,
         duration: activating ? FADE_IN_MS : FADE_OUT_MS,
@@ -104,23 +135,58 @@ const LyricRow = memo(function LyricRow({
         bounciness: activating ? 4 : 0,
         useNativeDriver: true,
       }),
-    ]).start();
-  }, [state, opacity, scale]);
+      Animated.spring(focus, {
+        toValue: toFocus,
+        speed: activating ? 16 : 22,
+        bounciness: activating ? 3 : 0,
+        useNativeDriver: true,
+      }),
+    ]);
+    transition.start();
+    return () => transition.stop();
+  }, [state, reduceMotion, opacity, scale, focus, pressScale]);
+
+  const pressIn = useCallback(() => {
+    pressScale.stopAnimation();
+    if (reduceMotion) {
+      pressScale.setValue(1);
+      return;
+    }
+    Animated.timing(pressScale, {
+      toValue: 0.985,
+      duration: 90,
+      easing: Easing.out(Easing.quad),
+      useNativeDriver: true,
+    }).start();
+  }, [pressScale, reduceMotion]);
+  const pressOut = useCallback(() => {
+    pressScale.stopAnimation();
+    if (reduceMotion) {
+      pressScale.setValue(1);
+      return;
+    }
+    Animated.spring(pressScale, {
+      toValue: 1,
+      speed: 28,
+      bounciness: 2,
+      useNativeDriver: true,
+    }).start();
+  }, [pressScale, reduceMotion]);
 
   const isActive = state === 'active';
-
-  return (
-    <Pressable
-      onPress={() => onPress(index)}
-      accessibilityRole="button"
-      accessibilityLabel={line.text || 'Baris kosong'}
-      accessibilityHint={synced ? 'Lompat ke bagian lagu ini' : undefined}
-      accessibilityState={{ selected: isActive }}
-      style={({ pressed }) => [
-        styles.lineHit,
-        pressed && { opacity: 0.7, transform: [{ scale: 0.98 }] },
-      ]}
-    >
+  const content = (
+    <Animated.View style={[styles.lineContent, { transform: [{ scale: pressScale }] }]}>
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.focusMarker,
+          {
+            backgroundColor: palette.accent,
+            opacity: focus,
+            transform: [{ scaleX: markerScaleX }],
+          },
+        ]}
+      />
       <Animated.Text
         style={[
           styles.line,
@@ -130,12 +196,41 @@ const LyricRow = memo(function LyricRow({
             fontWeight: isActive ? '800' : '700',
             lineHeight: isActive ? 34 : 28,
             opacity,
-            transform: [{ scale }],
+            transform: [{ translateX: focusTranslateX }, { scale }],
           },
         ]}
       >
         {line.text || ' '}
       </Animated.Text>
+    </Animated.View>
+  );
+  const onLayout = (event: LayoutChangeEvent) => {
+    const { y, height } = event.nativeEvent.layout;
+    onRowLayout(index, y, height);
+  };
+
+  if (!synced) {
+    return (
+      <View onLayout={onLayout} style={styles.lineHit}>
+        {content}
+      </View>
+    );
+  }
+
+  return (
+    <Pressable
+      onPress={() => onPress(index)}
+      onPressIn={pressIn}
+      onPressOut={pressOut}
+      onLayout={onLayout}
+      android_ripple={ripple}
+      accessibilityRole="button"
+      accessibilityLabel={line.text || 'Baris kosong'}
+      accessibilityHint="Lompat ke bagian lagu ini"
+      accessibilityState={{ selected: isActive }}
+      style={styles.lineHit}
+    >
+      {content}
     </Pressable>
   );
 });
@@ -147,6 +242,7 @@ export function AnimatedLyricsView({
   palette,
   currentTime,
   glowColor,
+  resource,
 }: {
   videoId: string;
   palette: Palette;
@@ -154,24 +250,42 @@ export function AnimatedLyricsView({
   currentTime: number;
   /** Ambient backlight tint; defaults to the signature amber glow. */
   glowColor?: string;
+  resource: LyricsResource;
 }) {
-  const hasCached = lyricsCache.has(videoId);
-  const [data, setData] = useState<Lyrics | null>(() => lyricsCache.get(videoId) ?? null);
-  const [loading, setLoading] = useState(!hasCached);
-  const [failed, setFailed] = useState(false);
-  const [retry, setRetry] = useState(0);
-
-  // Manual focus wins briefly after a tap, then playback focus resumes.
-  const [manualFocus, setManualFocus] = useState<number | null>(null);
-  const manualFocusTimer = useRef<TimeoutHandle | null>(null);
+  const { lyrics: data, loading, failed, retry } = resource;
+  const [viewportHeight, setViewportHeight] = useState(0);
+  const [reduceMotion, setReduceMotion] = useState(true);
 
   const scrollRef = useRef<ScrollView>(null);
-  const viewportH = useRef(0);
-  const lastScrolledIndex = useRef(-2);
+  const rowGeometry = useRef(new Map<number, RowGeometry>());
+  const lastScrollTarget = useRef<number | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    const subscription = AccessibilityInfo.addEventListener(
+      'reduceMotionChanged',
+      (enabled) => setReduceMotion(enabled),
+    );
+    void AccessibilityInfo.isReduceMotionEnabled()
+      .then((enabled) => {
+        if (mounted) setReduceMotion(enabled);
+      })
+      .catch(() => undefined);
+    return () => {
+      mounted = false;
+      subscription.remove();
+    };
+  }, []);
 
   // Ambient glow breathing loop (opacity only, native-driver safe).
   const glow = useRef(new Animated.Value(0.6)).current;
   useEffect(() => {
+    glow.stopAnimation();
+    if (reduceMotion) {
+      glow.setValue(0.6);
+      return;
+    }
+
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(glow, {
@@ -190,82 +304,57 @@ export function AnimatedLyricsView({
     );
     loop.start();
     return () => loop.stop();
-  }, [glow]);
+  }, [glow, reduceMotion]);
 
-  useEffect(() => {
-    if (lyricsCache.has(videoId)) {
-      setData(lyricsCache.get(videoId) ?? null);
-      setLoading(false);
-      setFailed(false);
-      return;
-    }
-
-    const controller = new AbortController();
-    setData(null);
-    setLoading(true);
-    setFailed(false);
-    fetchLyrics(videoId, controller.signal)
-      .then((response) => {
-        if (controller.signal.aborted) return;
-        lyricsCache.set(videoId, response.lyrics);
-        setData(response.lyrics);
-        setLoading(false);
-      })
-      .catch((error: unknown) => {
-        if (controller.signal.aborted || (error instanceof Error && error.name === 'AbortError'))
-          return;
-        setLoading(false);
-        setFailed(true);
-      });
-    return () => controller.abort();
-  }, [videoId, retry]);
-
-  useEffect(
-    () => () => {
-      if (manualFocusTimer.current) clearTimeout(manualFocusTimer.current);
-    },
-    [],
-  );
 
   const lines = useMemo(() => data?.lines ?? [], [data]);
   const synced = !!data?.synced && lines.some((line) => line.startMs !== undefined);
-  const playbackIndex = useMemo(
-    () => (synced ? activeLineIndex(lines, currentTime * 1000) : -1),
+  const focusIndex = useMemo(
+    () =>
+      synced
+        ? activeLineIndex(lines, currentTime * 1_000 + LYRIC_LOOKAHEAD_MS)
+        : -1,
     [synced, lines, currentTime],
   );
-  const focusIndex = manualFocus ?? playbackIndex;
 
-  // Smooth auto-centering: only scroll when the focused line actually changes.
-  useEffect(() => {
-    if (focusIndex < 0 || focusIndex === lastScrolledIndex.current) return;
-    if (viewportH.current <= 0) return;
-    lastScrolledIndex.current = focusIndex;
-    scrollRef.current?.scrollTo({
-      y: focusScrollOffset(focusIndex, LINE_PITCH, viewportH.current, CONTENT_TOP_PADDING),
-      animated: true,
-    });
-  }, [focusIndex]);
+  useLayoutEffect(() => {
+    rowGeometry.current.clear();
+    lastScrollTarget.current = null;
+  }, [videoId, data]);
 
-  // Reset scroll bookkeeping per track.
+  const scrollToFocus = useCallback(
+    (index: number): void => {
+      if (index < 0 || viewportHeight <= 0) return;
+      const geometry = rowGeometry.current.get(index);
+      if (!geometry) return;
+      const target = focusScrollOffset(geometry.y, geometry.height, viewportHeight);
+      if (target === lastScrollTarget.current) return;
+      lastScrollTarget.current = target;
+      scrollRef.current?.scrollTo({ y: target, animated: !reduceMotion });
+    },
+    [viewportHeight, reduceMotion],
+  );
+
   useEffect(() => {
-    lastScrolledIndex.current = -2;
-    setManualFocus(null);
-  }, [videoId]);
+    scrollToFocus(focusIndex);
+  }, [focusIndex, scrollToFocus]);
+
+  const onRowLayout = useCallback(
+    (index: number, y: number, height: number): void => {
+      rowGeometry.current.set(index, { y, height });
+      if (index === focusIndex) scrollToFocus(index);
+    },
+    [focusIndex, scrollToFocus],
+  );
 
   const focusLine = useCallback(
     (index: number): void => {
-      setManualFocus(index);
-      if (manualFocusTimer.current) clearTimeout(manualFocusTimer.current);
-      manualFocusTimer.current = setTimeout(() => setManualFocus(null), 5000);
-
-      if (synced) {
-        const timed = nearestTimedIndex(lines, index);
-        const startMs = timed >= 0 ? lines[timed].startMs : undefined;
-        if (startMs !== undefined) seekTo(startMs / 1000);
-      }
+      const timed = nearestTimedIndex(lines, index);
+      const startMs = timed >= 0 ? lines[timed].startMs : undefined;
+      if (startMs !== undefined) seekTo(startMs / 1_000);
       AccessibilityInfo.announceForAccessibility(lines[index]?.text ?? '');
     },
-    [synced, lines],
+    [lines],
   );
 
   if (loading) {
@@ -295,7 +384,7 @@ export function AnimatedLyricsView({
         <AmbientGlow color={glowColor ?? glass.glow} glow={glow} />
         <Text style={[styles.stateText, { color: palette.error }]}>Lirik tidak dapat dimuat</Text>
         <Pressable
-          onPress={() => setRetry((value) => value + 1)}
+          onPress={retry}
           accessibilityRole="button"
           accessibilityLabel="Coba muat lirik lagi"
           style={({ pressed }) => [
@@ -330,16 +419,23 @@ export function AnimatedLyricsView({
       <ScrollView
         ref={scrollRef}
         accessibilityLabel="Lirik lagu"
-        onLayout={(e) => {
-          viewportH.current = e.nativeEvent.layout.height;
-        }}
+        onLayout={(event) => setViewportHeight(event.nativeEvent.layout.height)}
+        fadingEdgeLength={spacing.xxl}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[
+          styles.content,
+          {
+            paddingTop: viewportHeight / 2,
+            paddingBottom: viewportHeight / 2,
+          },
+        ]}
       >
         {lines.map((line, index) => {
           let lineState: LyricRowProps['state'];
-          if (!synced || focusIndex < 0) {
+          if (!synced) {
             lineState = 'unsync';
+          } else if (focusIndex < 0) {
+            lineState = 'future';
           } else if (index === focusIndex) {
             lineState = 'active';
           } else if (index < focusIndex) {
@@ -356,7 +452,9 @@ export function AnimatedLyricsView({
               state={lineState}
               palette={palette}
               synced={synced}
+              reduceMotion={reduceMotion}
               onPress={focusLine}
+              onRowLayout={onRowLayout}
             />
           );
         })}
@@ -411,18 +509,32 @@ const styles = StyleSheet.create({
     top: '22%',
   },
   content: {
-    paddingTop: CONTENT_TOP_PADDING,
-    paddingBottom: spacing.xxl * 3,
     paddingHorizontal: spacing.xl,
     gap: spacing.md,
   },
-  lineHit: { minHeight: TOUCH_TARGET, justifyContent: 'center' },
+  lineHit: {
+    minHeight: TOUCH_TARGET,
+    justifyContent: 'center',
+    borderRadius: radius.sm,
+  },
+  lineContent: { minHeight: TOUCH_TARGET, justifyContent: 'center' },
+  focusMarker: {
+    position: 'absolute',
+    left: 0,
+    top: '50%',
+    width: spacing.md,
+    height: 3,
+    marginTop: -1.5,
+    borderRadius: radius.full,
+    transformOrigin: 'left center',
+  },
   line: {
     textAlign: 'left',
     letterSpacing: -0.3,
     textShadowColor: 'rgba(0, 0, 0, 0.35)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 6,
+    transformOrigin: 'left center',
   },
   source: { fontSize: typeScale.small, marginTop: spacing.lg },
   stateWrap: {

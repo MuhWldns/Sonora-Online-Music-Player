@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   activeLineIndex,
   focusScrollOffset,
+  lyricPreviewText,
   nearestTimedIndex,
 } from './lyricsPosition';
 import type { TimedLine } from './lyricsPosition';
@@ -47,23 +48,47 @@ test('activeLineIndex holds the last timed line past the end', () => {
   assert.equal(activeLineIndex(synced, 60000), 3);
 });
 
-test('focusScrollOffset centers the focused line in the viewport', () => {
-  // pitch 60, viewport 400, top padding 24:
-  // line 2 center = 24 + 2*60 + 30 = 174; offset = 174 - 200 = 0 (clamped).
-  assert.equal(focusScrollOffset(2, 60, 400, 24), 0);
-  // line 10 center = 24 + 600 + 30 = 654; offset = 454.
-  assert.equal(focusScrollOffset(10, 60, 400, 24), 454);
+test('lyricPreviewText follows synced playback with the shared lookahead', () => {
+  assert.equal(lyricPreviewText(synced, true, -201), '');
+  assert.equal(lyricPreviewText(synced, true, -200), 'line one');
+  assert.equal(lyricPreviewText(synced, true, 3799), 'line one');
+  assert.equal(lyricPreviewText(synced, true, 3800), 'line two');
 });
 
-test('focusScrollOffset never scrolls above the content origin', () => {
-  assert.equal(focusScrollOffset(0, 60, 400, 24), 0);
-  assert.equal(focusScrollOffset(1, 60, 400, 24), 0);
+test('lyricPreviewText keeps instrumental rows blank', () => {
+  const instrumental: TimedLine[] = [
+    { text: 'sung', startMs: 0 },
+    { text: '', startMs: 2000 },
+    { text: 'next', startMs: 4000 },
+  ];
+  assert.equal(lyricPreviewText(instrumental, true, 2200), '');
 });
 
-test('focusScrollOffset guards degenerate inputs', () => {
-  assert.equal(focusScrollOffset(-1, 60, 400, 24), 0);
-  assert.equal(focusScrollOffset(3, 0, 400, 24), 0);
-  assert.equal(focusScrollOffset(3, 60, 0, 24), 0);
+test('lyricPreviewText uses the first non-empty plain lyric', () => {
+  const plain: TimedLine[] = [{ text: '' }, { text: ' first line ' }, { text: 'second' }];
+  assert.equal(lyricPreviewText(plain, false, 9000), 'first line');
+  assert.equal(lyricPreviewText([], false, 9000), '');
+});
+
+test('focusScrollOffset centers measured rows in the viewport', () => {
+  assert.equal(focusScrollOffset(300, 48, 400), 124);
+  assert.equal(focusScrollOffset(640, 48, 400), 464);
+});
+
+test('focusScrollOffset centers a wrapped tall row using its actual height', () => {
+  assert.equal(focusScrollOffset(420, 102, 360), 291);
+});
+
+test('focusScrollOffset clamps rows near the content origin', () => {
+  assert.equal(focusScrollOffset(0, 48, 400), 0);
+  assert.equal(focusScrollOffset(120, 48, 400), 0);
+});
+
+test('focusScrollOffset guards non-positive dimensions', () => {
+  assert.equal(focusScrollOffset(300, 0, 400), 0);
+  assert.equal(focusScrollOffset(300, -1, 400), 0);
+  assert.equal(focusScrollOffset(300, 48, 0), 0);
+  assert.equal(focusScrollOffset(300, 48, -1), 0);
 });
 
 test('nearestTimedIndex finds the previous timed line', () => {

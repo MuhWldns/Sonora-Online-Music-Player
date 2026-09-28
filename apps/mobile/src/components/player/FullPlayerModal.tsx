@@ -10,18 +10,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 
 import { usePlayerState } from '../../player/usePlayerState';
-import {
-  nextTrack,
-  prevTrack,
-  seekTo,
-  togglePlay,
-  toggleShuffle,
-} from '../../player/service';
+import { nextTrack, prevTrack, seekTo, togglePlay } from '../../player/service';
 import { darkPalette, glass, radius, spacing, typeScale } from '../../theme';
 import type { Palette } from '../../theme';
 import { Icon, IconButton } from '../Icon';
 import { AnimatedLyricsView } from './AnimatedLyricsView';
 import { ProgressSlider } from './ProgressSlider';
+import { lyricPreviewText } from './lyricsPosition';
+import { useLyricsResource } from './useLyricsResource';
 import { QueueEditor } from './QueueEditor';
 
 /** Which body view the header capsule selects. Artwork is the default. */
@@ -40,6 +36,14 @@ export function FullPlayerModal({ palette, onClose }: { palette: Palette; onClos
       error: s.error,
     }));
   const track = queue[index];
+  const lyricsResource = useLyricsResource(track?.videoId);
+  const lyricPreview = lyricsResource.lyrics
+    ? lyricPreviewText(
+        lyricsResource.lyrics.lines,
+        lyricsResource.lyrics.synced,
+        currentTime * 1_000,
+      )
+    : '';
   const [view, setView] = useState<SheetView>('artwork');
   const insets = useSafeAreaInsets();
 
@@ -117,6 +121,7 @@ export function FullPlayerModal({ palette, onClose }: { palette: Palette; onClos
             videoId={track.videoId}
             palette={palette}
             currentTime={currentTime}
+            resource={lyricsResource}
           />
         ) : (
           <View style={styles.body}>
@@ -154,20 +159,23 @@ export function FullPlayerModal({ palette, onClose }: { palette: Palette; onClos
             ) : error ? (
               <Text style={[styles.bufState, { color: palette.error }]}>Gagal memuat: {error}</Text>
             ) : null}
-            <ProgressSlider
-              currentTime={currentTime}
-              duration={duration}
-              palette={palette}
-              onSeek={seekTo}
-            />
-            <View style={styles.controls}>
-              <TactileIcon
-                name="shuffle"
-                size={28}
-                color={shuffle ? palette.accent : palette.textSecondary}
-                onPress={toggleShuffle}
-                accessibilityLabel={shuffle ? 'Matikan acak' : 'Nyalakan acak'}
+            <View style={styles.progressBlock}>
+              <ProgressSlider
+                currentTime={currentTime}
+                duration={duration}
+                palette={palette}
+                onSeek={seekTo}
               />
+              <View style={styles.lyricPreviewSlot}>
+                <Text
+                  style={[styles.lyricPreview, { color: palette.textSecondary }]}
+                  numberOfLines={1}
+                >
+                  {lyricPreview || ' '}
+                </Text>
+              </View>
+            </View>
+            <View style={styles.controls}>
               <TactileIcon
                 name="skip-previous"
                 size={40}
@@ -258,7 +266,7 @@ function TactileIcon({
   onPress,
   accessibilityLabel,
 }: {
-  name: 'shuffle' | 'skip-previous' | 'skip-next';
+  name: 'skip-previous' | 'skip-next';
   size: number;
   color: string;
   onPress: () => void;
@@ -337,11 +345,25 @@ const styles = StyleSheet.create({
   trackTitle: { fontSize: typeScale.titleLarge, fontWeight: '700', letterSpacing: -0.2 },
   trackArtist: { fontSize: typeScale.body },
   bufState: { fontSize: typeScale.label },
+  progressBlock: { alignSelf: 'stretch', gap: spacing.sm },
+  lyricPreviewSlot: {
+    minHeight: 20,
+    alignSelf: 'stretch',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.sm,
+  },
+  lyricPreview: {
+    fontSize: typeScale.label,
+    fontWeight: '600',
+    lineHeight: 18,
+    textAlign: 'center',
+  },
   controls: {
+    alignSelf: 'stretch',
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: spacing.xl,
-    marginTop: spacing.sm,
   },
   playBtn: {
     width: 84,
@@ -353,8 +375,8 @@ const styles = StyleSheet.create({
   },
   stateRow: { fontSize: typeScale.small, marginTop: spacing.xs },
   tactileTarget: {
-    minWidth: 48,
-    minHeight: 48,
+    width: 64,
+    height: 64,
     alignItems: 'center',
     justifyContent: 'center',
   },
