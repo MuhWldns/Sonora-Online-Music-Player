@@ -32,6 +32,7 @@ import {
   focusScrollOffset,
   LYRIC_LOOKAHEAD_MS,
   nearestTimedIndex,
+  timedLinePosition,
 } from './lyricsPosition';
 import type { LyricsResource } from './useLyricsResource';
 /** Kinetic type roles (spec): active 26/800 full white, inactive 20/700 dim. */
@@ -316,6 +317,10 @@ export function AnimatedLyricsView({
         : -1,
     [synced, lines, currentTime],
   );
+  const position = useMemo(
+    () => (synced ? timedLinePosition(lines, focusIndex) : null),
+    [synced, lines, focusIndex],
+  );
 
   useLayoutEffect(() => {
     rowGeometry.current.clear();
@@ -416,6 +421,27 @@ export function AnimatedLyricsView({
   return (
     <View style={styles.wrap}>
       <AmbientGlow color={glowColor ?? glass.glow} glow={glow} />
+      {position ? (
+        <View
+          pointerEvents="none"
+          accessible
+          accessibilityLabel={`Posisi lirik ${position.current} dari ${position.total}`}
+          style={styles.positionWrap}
+        >
+          <View
+            style={[
+              styles.positionBadge,
+              { backgroundColor: palette.surfaceVariant, borderColor: palette.outline },
+            ]}
+          >
+            <View style={[styles.positionDot, { backgroundColor: palette.accent }]} />
+            <Text style={[styles.positionText, { color: palette.textSecondary }]}>
+              {position.current}
+              <Text style={{ color: palette.text }}> / {position.total}</Text>
+            </Text>
+          </View>
+        </View>
+      ) : null}
       <ScrollView
         ref={scrollRef}
         accessibilityLabel="Lirik lagu"
@@ -489,6 +515,28 @@ function AmbientGlow({ color, glow }: { color: string; glow: Animated.Value }) {
 
 const styles = StyleSheet.create({
   wrap: { flex: 1 },
+  positionWrap: {
+    position: 'absolute',
+    top: spacing.sm,
+    right: spacing.lg,
+    zIndex: 2,
+  },
+  positionBadge: {
+    minHeight: 30,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.full,
+    borderWidth: 1,
+  },
+  positionDot: { width: 5, height: 5, borderRadius: 3 },
+  positionText: {
+    fontSize: typeScale.small,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+    letterSpacing: 0.2,
+  },
   glowWrap: {
     ...StyleSheet.absoluteFill,
     alignItems: 'center',

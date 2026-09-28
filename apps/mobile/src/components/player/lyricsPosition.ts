@@ -31,6 +31,26 @@ export function activeLineIndex(lines: readonly TimedLine[], positionMs: number)
   return active;
 }
 
+export interface TimedLinePosition {
+  current: number;
+  total: number;
+}
+
+/** Ordinal among timed rows only; untimed spacer rows never inflate progress. */
+export function timedLinePosition(
+  lines: readonly TimedLine[],
+  activeIndex: number,
+): TimedLinePosition | null {
+  let total = 0;
+  let current = 0;
+  for (let index = 0; index < lines.length; index++) {
+    if (lines[index].startMs === undefined) continue;
+    total++;
+    if (index <= activeIndex) current = total;
+  }
+  return total > 0 ? { current, total } : null;
+}
+
 /**
  * Compact player preview text. Synced lyrics follow playback; plain lyrics use
  * their first non-empty line because they have no timeline to follow.

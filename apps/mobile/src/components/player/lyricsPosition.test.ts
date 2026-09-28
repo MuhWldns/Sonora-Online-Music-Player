@@ -6,6 +6,7 @@ import {
   focusScrollOffset,
   lyricPreviewText,
   nearestTimedIndex,
+  timedLinePosition,
 } from './lyricsPosition';
 import type { TimedLine } from './lyricsPosition';
 
@@ -46,6 +47,25 @@ test('activeLineIndex skips untimed lines but keeps their slots', () => {
 
 test('activeLineIndex holds the last timed line past the end', () => {
   assert.equal(activeLineIndex(synced, 60000), 3);
+});
+
+test('timedLinePosition counts timed rows without inflating for spacers', () => {
+  const lines: TimedLine[] = [
+    { text: 'first', startMs: 1000 },
+    { text: '' },
+    { text: 'second', startMs: 5000 },
+    { text: 'annotation' },
+    { text: 'third', startMs: 9000 },
+  ];
+  assert.deepEqual(timedLinePosition(lines, -1), { current: 0, total: 3 });
+  assert.deepEqual(timedLinePosition(lines, 0), { current: 1, total: 3 });
+  assert.deepEqual(timedLinePosition(lines, 2), { current: 2, total: 3 });
+  assert.deepEqual(timedLinePosition(lines, 4), { current: 3, total: 3 });
+});
+
+test('timedLinePosition is absent for plain lyrics', () => {
+  assert.equal(timedLinePosition([{ text: 'plain' }, { text: 'lyrics' }], -1), null);
+  assert.equal(timedLinePosition([], -1), null);
 });
 
 test('lyricPreviewText follows synced playback with the shared lookahead', () => {
