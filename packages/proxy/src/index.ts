@@ -8,7 +8,7 @@
  *   churn node-class youtubei.js, pola terbukti dari Rich Music.
  * - /player: youtubei.js TrackInfo + decipher — butuh signature solver.
  */
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 
 import type { CacheAdapter } from './cache.js';
 import { createPlaybackInnertube, getDataInnertube, type InnertubeDeps } from './innertube.js';
@@ -34,6 +34,11 @@ import {
   thumbs,
   type ParsedItem,
 } from './parsers.js';
+import {
+  canonicalPlaylistId,
+  normalizePlaylistTitle,
+  parsePlaylistLibraryState,
+} from './playlists.js';
 import { upstreamRangeFor } from './stream-range.js';
 
 export interface AppDeps extends InnertubeDeps {
@@ -65,6 +70,37 @@ async function rawExecute(
   });
   const data = (res as { data?: Record<string, unknown> }).data ?? res;
   return data as Record<string, unknown>;
+}
+
+interface MutationResponse {
+  success: boolean;
+  statusCode: number;
+  data: Record<string, unknown>;
+}
+
+async function executeMutation(
+  yt: InnertubeInstance,
+  endpoint: string,
+  payload: Record<string, unknown>,
+): Promise<MutationResponse> {
+  const response = await yt.session.actions.execute(endpoint, {
+    client: 'YTMUSIC',
+    parse: false,
+    ...payload,
+  });
+  const raw = response as {
+    success?: unknown;
+    status_code?: unknown;
+    data?: unknown;
+  };
+  return {
+    success: raw.success === true,
+    statusCode: typeof raw.status_code === 'number' ? raw.status_code : 0,
+    data:
+      raw.data && typeof raw.data === 'object' && !Array.isArray(raw.data)
+        ? (raw.data as Record<string, unknown>)
+        : {},
+  };
 }
 
 export function createApp(deps: AppDeps): Hono {
@@ -131,6 +167,62 @@ export function createApp(deps: AppDeps): Hono {
     return c.json(json);
   });
 
+  app.post('/playlists', async (c) => {
+    const cookie = cookieOf(c);
+    if (!cookie) {
+      return c.json({ error: 'login required (send x-yt-cookie header)' }, 401);
+    }
+
+    const body = await c.req.json<unknown>().catch(() => undefined);
+    const title = normalizePlaylistTitle(
+      body && typeof body === 'object' && !Array.isArray(body)
+        ? (body as Record<string, unknown>).title
+        : undefined,
+    );
+    if (!title) return c.json({ error: 'invalid title' }, 400);
+
+    const yt = await getDataInnertube(deps, cookie);
+    const result = await executeMutation(yt, 'playlist/create', {
+      title,
+      privacyStatus: 'PRIVATE',
+      videoIds: [],
+    });
+    const playlistId = canonicalPlaylistId(result.data.playlistId);
+    if (!result.success || !playlistId) {
+      return c.json(
+        { error: 'playlist creation failed', upstreamStatus: result.statusCode },
+        502,
+      );
+    }
+    return c.json({ playlistId }, 201);
+  });
+
+  const mutatePlaylistLibrary = async (c: Context, saved: boolean) => {
+    const cookie = cookieOf(c);
+    if (!cookie) {
+      return c.json({ error: 'login required (send x-yt-cookie header)' }, 401);
+    }
+    const playlistId = canonicalPlaylistId(c.req.param('playlistId'));
+    if (!playlistId) return c.json({ error: 'invalid playlistId' }, 400);
+
+    const yt = await getDataInnertube(deps, cookie);
+    const result = await executeMutation(
+      yt,
+      saved ? 'like/like' : 'like/removelike',
+      { target: playlistId },
+    );
+    if (!result.success) {
+      return c.json(
+        { error: 'playlist library mutation failed', upstreamStatus: result.statusCode },
+        502,
+      );
+    }
+    return c.json({ playlistId, saved });
+  };
+
+  app.put('/library/playlists/:playlistId', (c) => mutatePlaylistLibrary(c, true));
+  app.delete('/library/playlists/:playlistId', (c) => mutatePlaylistLibrary(c, false));
+
   app.get('/library', async (c) => {
     const cookie = cookieOf(c);
     if (!cookie)
@@ -186,7 +278,8 @@ export function createApp(deps: AppDeps): Hono {
         sections.push({ title: text(header), items });
       }
     }
-    return c.json({ sections });
+    const playlist = parsePlaylistLibraryState(data, browseId);
+    return c.json({ sections, ...(playlist ? { playlist } : {}) });
   });
 
   app.get('/next', async (c) => {
