@@ -17,6 +17,7 @@ Platform.shim.eval = async (data) => new Function(data.output)();
 const app = createApp({
   Innertube,
   cache: new MemoryCache(),
+  fetch: globalThis.fetch,
   poToken: createNodePoTokenProvider(),
 });
 

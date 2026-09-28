@@ -44,6 +44,7 @@ export default {
     const app = createApp({
       Innertube,
       cache: env.CACHE ? new KVCache(env.CACHE) : NOOP_CACHE,
+      fetch: globalThis.fetch,
     });
     return app.fetch(request);
   },

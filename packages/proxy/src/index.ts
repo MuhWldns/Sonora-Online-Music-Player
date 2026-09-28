@@ -12,14 +12,46 @@ import { Hono } from 'hono';
 
 import type { CacheAdapter } from './cache.js';
 import { createPlaybackInnertube, getDataInnertube, type InnertubeDeps } from './innertube.js';
+import {
+  fetchExactLrclibLyrics,
+  normalizeLrclibSignature,
+  parseDurationSeconds,
+  type LrclibLookupResult,
+} from './lrclib.js';
 import type { Innertube as InnertubeInstance } from 'youtubei.js/agnostic';
-import { findAll, findFirst, parseBrowseSections, parseListItem, parseLyricsBrowseId, parseLyricsResponse, parseNextResponse, parseSections, parseTwoRow, text, thumbs, type ParsedItem } from './parsers.js';
+import {
+  findAll,
+  findFirst,
+  normalizeDuration,
+  parseBrowseSections,
+  parseListItem,
+  parseLyricsBrowseId,
+  parseLyricsResponse,
+  parseNextResponse,
+  parseSections,
+  parseTwoRow,
+  text,
+  thumbs,
+  type ParsedItem,
+} from './parsers.js';
 import { upstreamRangeFor } from './stream-range.js';
 
 export interface AppDeps extends InnertubeDeps {
   cache: CacheAdapter;
+  fetch: typeof globalThis.fetch;
   poToken?: import('./po-token.js').PoTokenProvider;
 }
+
+type CacheableLrclibResult = Extract<LrclibLookupResult, { kind: 'found' | 'not-found' }>;
+
+interface CachedLrclibResult {
+  signatureKey: string;
+  result: CacheableLrclibResult;
+}
+
+const LRCLIB_FOUND_TTL_MS = 24 * 60 * 60_000;
+const LRCLIB_NOT_FOUND_TTL_MS = 15 * 60_000;
+const LRCLIB_COOLDOWN_KEY = 'lyrics:lrclib:cooldown';
 
 /** Raw InnerTube call, unwrap .data dari HttpResponse. */
 async function rawExecute(
@@ -191,10 +223,77 @@ export function createApp(deps: AppDeps): Hono {
       },
     });
     const browseId = parseLyricsBrowseId(nextData);
-    if (!browseId) return c.json({ lyrics: null });
+    const queue = parseNextResponse(nextData).queue;
+    const row =
+      queue.find((item) => item.videoId === videoId && item.selected) ??
+      queue.find((item) => item.videoId === videoId);
+    const durationSec = row
+      ? parseDurationSeconds(normalizeDuration(row.duration))
+      : undefined;
 
-    const lyricsData = await rawExecute(yt, '/browse', { browseId });
-    return c.json(parseLyricsResponse(lyricsData));
+    let lrclibResult: LrclibLookupResult | undefined;
+    if (row && durationSec !== undefined) {
+      const signature = normalizeLrclibSignature({
+        title: row.title,
+        artist: row.artist,
+        durationSec,
+      });
+
+      if (signature.title && signature.artist) {
+        const signatureKey = JSON.stringify([
+          signature.title,
+          signature.artist,
+          signature.durationSec,
+        ]);
+        const cacheKey = `lyrics:lrclib:${hashStr(signatureKey)}`;
+        const cached = await deps.cache.get<CachedLrclibResult>(cacheKey);
+
+        if (cached?.signatureKey === signatureKey) {
+          lrclibResult = cached.result;
+        } else {
+          const cooldown = await deps.cache.get<{ active: boolean }>(LRCLIB_COOLDOWN_KEY);
+          if (cooldown?.active === true) {
+            lrclibResult = { kind: 'unavailable' };
+          } else {
+            lrclibResult = await fetchExactLrclibLyrics(deps.fetch, signature);
+            if (lrclibResult.kind === 'found') {
+              await deps.cache.set<CachedLrclibResult>(
+                cacheKey,
+                { signatureKey, result: lrclibResult },
+                LRCLIB_FOUND_TTL_MS,
+              );
+            } else if (lrclibResult.kind === 'not-found') {
+              await deps.cache.set<CachedLrclibResult>(
+                cacheKey,
+                { signatureKey, result: lrclibResult },
+                LRCLIB_NOT_FOUND_TTL_MS,
+              );
+            } else if (lrclibResult.retryAfterSec !== undefined) {
+              await deps.cache.set(
+                LRCLIB_COOLDOWN_KEY,
+                { active: true },
+                Math.max(60, lrclibResult.retryAfterSec) * 1_000,
+              );
+            }
+          }
+        }
+
+        if (lrclibResult.kind === 'found') {
+          return c.json({ lyrics: lrclibResult.lyrics });
+        }
+      }
+    }
+
+    if (browseId) {
+      const lyricsData = await rawExecute(yt, '/browse', { browseId });
+      const ytmLyrics = parseLyricsResponse(lyricsData);
+      if (ytmLyrics.lyrics) return c.json(ytmLyrics);
+    }
+
+    if (lrclibResult?.kind === 'unavailable') {
+      return c.json({ error: 'lyrics temporarily unavailable' }, 503);
+    }
+    return c.json({ lyrics: null });
   });
 
   app.get('/next/continue', async (c) => {
@@ -249,7 +348,7 @@ export function createApp(deps: AppDeps): Hono {
     // tetapi menerima bounded Range. Relay satu chunk per request; Media3 akan
     // meminta chunk berikutnya berdasarkan content-range.
     const clientRange = c.req.header('range');
-    const upstream = await fetch(url, {
+    const upstream = await deps.fetch(url, {
       headers: {
         'User-Agent':
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',

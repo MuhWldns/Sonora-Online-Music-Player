@@ -15,7 +15,7 @@ The proxy runs as a Docker container on a self-hosted Node.js server. Authentica
 - Library & liked songs from your own account (cookie-authenticated)
 - Audio playback with queue/radio (up next) support
 - Editable queue — reorder by drag, swipe to remove, and add next or to the end without interrupting the current track
-- Lyrics tab in the full player with session caching and explicit loading, empty, and retry states
+- Playback-synchronized lyrics in the full player via exact LRCLIB title + artist + duration matching, with centered active-line emphasis, tap-to-seek, session caching, and YouTube Music plain-text fallback
 - One-command deployment on a self-hosted Node.js server via Docker
 
 ## Repository layout
@@ -44,10 +44,10 @@ The proxy runs as a Docker container on a self-hosted Node.js server. Authentica
 | `GET /next` | `videoId` | radio queue (up to 50 items) plus its YTM continuation token |
 | `GET /next/continue` | `token` | next queue page plus its YTM continuation token |
 | `GET /player` | `videoId` | deciphered stream URL + metadata |
-| `GET /lyrics` | `videoId` | plain lyrics from the YouTube Music lyrics tab (HTTP 200 with `lyrics: null` when unavailable) |
+| `GET /lyrics` | `videoId` | exact LRCLIB synchronized lyrics when available, otherwise the YouTube Music plain lyrics shelf; HTTP 200 with `lyrics: null` confirms no result, while HTTP 503 means both sources were temporarily unable to provide lyrics and the client may retry |
 
 Account cookie is passed per-request via the `x-yt-cookie` header and is never stored server-side.
-Lyrics availability depends on the YouTube Music catalog, account, and region. Sonora does not use a third-party scraping fallback, and synchronized timestamps are not exposed because the upstream response currently supplies plain text only.
+For lyrics, the proxy derives public title, artist, and duration metadata from the exact requested item in YouTube Music's `/next` response, then sends only those three values to LRCLIB. The YouTube account cookie and inbound request headers are never forwarded to LRCLIB. Exact synchronized matches take precedence; YouTube Music plain lyrics remain the fallback. Availability can still vary by catalog and region. Sonora performs no fuzzy lyric matching and contacts no additional lyric providers.
 Radio recommendations remain in YouTube Music's algorithmic order. The client
 chains continuation pages, deduplicates by video ID, and caps its live queue at
 100 tracks. It also keeps a bounded local per-seed history of appended video IDs
