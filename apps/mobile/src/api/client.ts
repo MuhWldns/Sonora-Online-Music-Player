@@ -9,7 +9,18 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Keychain from 'react-native-keychain';
 
-import type { BrowseResponse, HistoryResponse, HomeResponse, LyricsResponse, NextResponse, PlayerResponse, SearchResponse } from './types';
+import type {
+  BrowseResponse,
+  CreatePlaylistResponse,
+  HistoryResponse,
+  HomeResponse,
+  LyricsResponse,
+  NextResponse,
+  PlayerResponse,
+  PlaylistLibraryMutationResponse,
+  PlaylistLibraryState,
+  SearchResponse,
+} from './types';
 
 const configuredProxyBase = process.env.EXPO_PUBLIC_PROXY_BASE;
 export const DEFAULT_PROXY_BASE =
@@ -46,26 +57,41 @@ export async function clearCookie(): Promise<void> {
   await Keychain.resetGenericPassword({ service: COOKIE_SERVICE });
 }
 
-export async function api<T>(
+async function request<T>(
   path: string,
-  params?: Record<string, string>,
-  signal?: AbortSignal,
+  params: Record<string, string> | undefined,
+  signal: AbortSignal | undefined,
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+  body?: unknown,
 ): Promise<T> {
   const base = await getProxyBase();
   const cookie = await getCookie();
   const url = new URL(`${base}${path}`);
   for (const [k, v] of Object.entries(params ?? {})) url.searchParams.set(k, v);
 
+  const headers = new Headers(cookie ? { 'x-yt-cookie': cookie } : undefined);
+  if (body !== undefined) headers.set('content-type', 'application/json');
   const res = await fetch(url.toString(), {
-    headers: cookie ? { 'x-yt-cookie': cookie } : undefined,
+    method,
+    headers,
     signal,
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`proxy ${res.status}: ${body.slice(0, 200)}`);
+    const responseBody = await res.text().catch(() => '');
+    throw new Error(`proxy ${res.status}: ${responseBody.slice(0, 200)}`);
   }
   return (await res.json()) as T;
 }
+
+export function api<T>(
+  path: string,
+  params?: Record<string, string>,
+  signal?: AbortSignal,
+): Promise<T> {
+  return request<T>(path, params, signal, 'GET');
+}
+
 
 export const search = (q: string, filter?: string) =>
   api<SearchResponse>('/search', { q, ...(filter ? { filter } : {}) });
@@ -85,6 +111,22 @@ export const player = (videoId: string) => api<PlayerResponse>('/player', { vide
 
 export const lyrics = (videoId: string, signal?: AbortSignal) =>
   api<LyricsResponse>('/lyrics', { videoId }, signal);
+
+export const createPlaylist = (title: string) =>
+  request<CreatePlaylistResponse>('/playlists', undefined, undefined, 'POST', { title });
+
+export async function setPlaylistSaved(
+  playlistId: string,
+  saved: boolean,
+): Promise<PlaylistLibraryState> {
+  const result = await request<PlaylistLibraryMutationResponse>(
+    `/library/playlists/${encodeURIComponent(playlistId)}`,
+    undefined,
+    undefined,
+    saved ? 'PUT' : 'DELETE',
+  );
+  return { id: result.playlistId, saved: result.saved };
+}
 
 /** Playback source: relay via proxy (IP-safe fallback path). videoId
  * di-encode karena bisa mengandung karakter URL-unsafe walau format

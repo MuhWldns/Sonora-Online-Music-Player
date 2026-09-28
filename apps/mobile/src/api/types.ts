@@ -41,8 +41,23 @@ export interface HistoryResponse {
   sections: ParsedSection[];
 }
 
+export interface PlaylistLibraryState {
+  id: string;
+  saved: boolean;
+}
+
 export interface BrowseResponse {
   sections: ParsedSection[];
+  playlist?: PlaylistLibraryState;
+}
+
+export interface CreatePlaylistResponse {
+  playlistId: string;
+}
+
+export interface PlaylistLibraryMutationResponse {
+  playlistId: string;
+  saved: boolean;
 }
 
 export interface QueueItem {
