@@ -10,12 +10,12 @@ The proxy runs as a Docker container on a self-hosted Node.js server. Authentica
 
 ## Features
 
-- Search (songs, albums, artists, playlists) via YouTube Music
+- Search (songs, albums, artists, playlists) via YouTube Music, with bounded on-device recent searches, clear-one/clear-all controls, and a deterministic daily discovery panel
 - Home feed with your account's personalized recommendations
-- Library & liked songs from your own account (cookie-authenticated)
+- Cookie-authenticated Library access, including private-playlist creation and saving or removing playlists from the account library
 - Audio playback with queue/radio (up next) support
 - Editable queue — reorder by drag, swipe to remove, and add next or to the end without interrupting the current track
-- Playback-synchronized lyrics in the full player via exact LRCLIB title + artist + duration matching, with centered active-line emphasis, tap-to-seek, session caching, and YouTube Music plain-text fallback
+- Playback-synchronized lyrics in the full player via exact LRCLIB title + artist + duration matching, with a timed-line position indicator, measured active-line centering, tap-to-seek, reduced-motion support, session caching, and YouTube Music plain-text fallback
 - One-command deployment on a self-hosted Node.js server via Docker
 
 ## Repository layout
@@ -34,19 +34,26 @@ The proxy runs as a Docker container on a self-hosted Node.js server. Authentica
 
 ## Proxy endpoints
 
-| Endpoint | Query | Description |
+| Endpoint | Input | Description |
 |---|---|---|
 | `GET /healthz` | — | liveness check |
 | `GET /search` | `q`, `filter=song\|video\|album\|artist\|playlist` | search (10 min cache) |
 | `GET /home` | — | home feed, personalized when cookie sent (5 min cache) |
 | `GET /library` | — | account library — **requires** `x-yt-cookie` |
-| `GET /browse` | `id` | album / artist / playlist details |
+| `POST /playlists` | JSON `{ "title": "…" }` | create a private account playlist — **requires** `x-yt-cookie` |
+| `PUT /library/playlists/:playlistId` | path parameter | save a playlist to the account library — **requires** `x-yt-cookie` |
+| `DELETE /library/playlists/:playlistId` | path parameter | remove a playlist from the account library — **requires** `x-yt-cookie` |
+| `GET /browse` | `id` | album / artist / playlist details, including authoritative saved state when YouTube Music exposes it |
 | `GET /next` | `videoId` | radio queue (up to 50 items) plus its YTM continuation token |
 | `GET /next/continue` | `token` | next queue page plus its YTM continuation token |
 | `GET /player` | `videoId` | deciphered stream URL + metadata |
 | `GET /lyrics` | `videoId` | exact LRCLIB synchronized lyrics when available, otherwise the YouTube Music plain lyrics shelf; HTTP 200 with `lyrics: null` confirms no result, while HTTP 503 means both sources were temporarily unable to provide lyrics and the client may retry |
 
 Account cookie is passed per-request via the `x-yt-cookie` header and is never stored server-side.
+
+Playlist mutations use the same per-request cookie boundary as Library reads. New playlists are always created as private; the proxy forwards each mutation to YouTube Music and retains neither account state nor playlist titles.
+
+Recent Search entries and the daily discovery rotation are bounded local app state. Individual or complete history removal affects only the device; the proxy receives a query only when the user submits that search.
 For lyrics, the proxy derives public title, artist, and duration metadata from the exact requested item in YouTube Music's `/next` response, then sends only those three values to LRCLIB. The YouTube account cookie and inbound request headers are never forwarded to LRCLIB. Exact synchronized matches take precedence; YouTube Music plain lyrics remain the fallback. Availability can still vary by catalog and region. Sonora performs no fuzzy lyric matching and contacts no additional lyric providers.
 Radio recommendations remain in YouTube Music's algorithmic order. The client
 chains continuation pages, deduplicates by video ID, and caps its live queue at
