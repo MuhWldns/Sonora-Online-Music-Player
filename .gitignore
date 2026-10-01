@@ -11,3 +11,6 @@ releases/
 .impeccable/
 BUG-AUDIO-PLAYBACK.md
 .codegraph/
+docs/
+.worktrees/
+.superpowers/
