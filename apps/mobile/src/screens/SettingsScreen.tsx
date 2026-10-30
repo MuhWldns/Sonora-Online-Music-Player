@@ -123,19 +123,18 @@ export function SettingsScreen({ palette }: { palette: Palette }) {
     flash('Proxy tersimpan');
   }, [proxyUrl, flash]);
 
-  const removeCookie = useCallback(async () => {
+  /** Logout: hapus sesi tersimpan + pilihan channel + jar WebView native.
+   *  Jar harus ikut dibersihkan per cookie Google — kalau tidak, layar login
+   *  berikutnya langsung ter-redirect dengan sesi lama (bug "login yang tidak
+   *  bisa dipakai login" ala BitChord). */
+  const logout = useCallback(async () => {
     await clearCookie();
-    // Pilihan channel ikut dibersihkan: tanpa cookie, pageId channel tidak
-    // berarti apa-apa untuk server (sesi sudah hilang).
     await clearUserChannel();
-    // Jar WebView native ikut dibersihkan per cookie Google — kalau tidak,
-    // layar login berikutnya langsung ter-redirect dengan sesi lama (bug
-    // "login yang tidak bisa dipakai login" ala BitChord).
     await clearGoogleWebCookies().catch(() => undefined);
     setHasCookie(false);
     setSession(null);
     setSessionError(null);
-    flash('Cookie dihapus');
+    flash('Logout berhasil');
   }, [flash]);
 
   /** Pilih channel (x-yt-user). id null = akun utama = hapus pageId tersimpan.
@@ -246,12 +245,12 @@ export function SettingsScreen({ palette }: { palette: Palette }) {
         {hasCookie ? (
           <View style={styles.actions}>
             <Pressable
-              onPress={removeCookie}
+              onPress={logout}
               accessibilityRole="button"
-              accessibilityLabel="Hapus cookie"
+              accessibilityLabel="Logout dari akun"
               style={({ pressed }) => [styles.btnTonal, pressed && { opacity: 0.7 }, { backgroundColor: palette.surfaceVariant }]}
             >
-              <Text style={[styles.btnTonalText, { color: palette.error }]}>Hapus cookie</Text>
+              <Text style={[styles.btnTonalText, { color: palette.error }]}>Logout</Text>
             </Pressable>
           </View>
         ) : (
