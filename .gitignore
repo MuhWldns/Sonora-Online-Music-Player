@@ -15,3 +15,4 @@ docs/
 .worktrees/
 .superpowers/
 .zcode/
+apps/mobile/vendor/**/android/build/
