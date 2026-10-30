@@ -1,0 +1,51 @@
+// android/build.gradle
+
+// Berdasarkan build.gradle asli @react-native-cookies/cookies@6.2.1,
+// DIPATCH untuk Gradle 9 / AGP 8+ (Sonora, RN 0.86):
+//  - `jcenter()` dihapus dua-duanya — method-nya sudah tidak ada di Gradle 9
+//    dan jcenter sendiri sudah read-only/shutdown.
+//  - `lintOptions` -> `lint` — DSL lama dihapus di AGP 8.
+//  - `com.facebook.react:react-native:+` -> `com.facebook.react:react-android:+`
+//    — koordinat lama tidak lagi dipublish sejak RN 0.71.
+// Patch ini di-vendor ke repo (bukan patch node_modules) supaya survive
+// `npm install` fresh tanpa bergantung postinstall script.
+
+def DEFAULT_COMPILE_SDK_VERSION = 34
+def DEFAULT_MIN_SDK_VERSION = 21
+
+def safeExtGet(prop, fallback) {
+    rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+}
+
+apply plugin: 'com.android.library'
+
+android {
+    compileSdkVersion safeExtGet('compileSdkVersion', DEFAULT_COMPILE_SDK_VERSION)
+    defaultConfig {
+        minSdkVersion safeExtGet('minSdkVersion', DEFAULT_MIN_SDK_VERSION)
+        targetSdkVersion safeExtGet('targetSdkVersion', safeExtGet('compileSdkVersion', DEFAULT_COMPILE_SDK_VERSION))
+        versionCode 1
+        versionName "1.0"
+    }
+    lint {
+        abortOnError false
+    }
+}
+
+repositories {
+    mavenLocal()
+    maven {
+        // All of React Native (JS, Obj-C sources, Android binaries) is installed from npm
+        url "$rootDir/../node_modules/react-native/android"
+    }
+    maven {
+        // Android JSC is installed from npm
+        url "$rootDir/../node_modules/jsc-android/dist"
+    }
+    google()
+}
+
+dependencies {
+    //noinspection GradleDynamicVersion
+    implementation 'com.facebook.react:react-android:+'  // From node_modules
+}
