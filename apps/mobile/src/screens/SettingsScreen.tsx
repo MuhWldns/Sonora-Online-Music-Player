@@ -2,9 +2,10 @@
  * Settings: proxy URL + cookie management with clear connection feedback.
  * Non-developer users paste these values — every action confirms state.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -12,18 +13,26 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon } from '../components/Icon';
 import {
   DEFAULT_PROXY_BASE,
+  authSession,
   clearCookie,
+  clearUserChannel,
   getCookie,
   getProxyBase,
   healthz,
   setCookie,
   setProxyBase,
+  setUserChannel,
 } from '../api/client';
+import { clearGoogleWebCookies } from '../auth/sessionCapture';
+import type { RootStackParamList } from '../navigation/types';
+import type { AuthSessionResponse } from '../api/types';
 import { radius, spacing, typeScale } from '../theme';
 import type { Palette } from '../theme';
 
@@ -34,17 +43,46 @@ type TestState =
   | { kind: 'fail'; reason: string };
 
 export function SettingsScreen({ palette }: { palette: Palette }) {
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [proxyUrl, setProxyUrl] = useState('');
   const [cookie, setCookieField] = useState('');
   const [hasCookie, setHasCookie] = useState(false);
   const [test, setTest] = useState<TestState>({ kind: 'idle' });
   const [savedFlash, setSavedFlash] = useState<string | null>(null);
+  const [session, setSession] = useState<AuthSessionResponse | null>(null);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  const [sessionLoading, setSessionLoading] = useState(false);
   const insets = useSafeAreaInsets();
+
+  /** Validasi cookie + ambil profil/channel lewat /auth/session.
+   *  401 dari server = cookie invalid → pesan eksplisit untuk user. */
+  const fetchSession = useCallback(async () => {
+    setSessionLoading(true);
+    try {
+      const result = await authSession();
+      setSession(result);
+      setSessionError(null);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setSession(null);
+      setSessionError(
+        msg.startsWith('proxy 401')
+          ? 'Cookie tidak valid. Hapus lalu tempel cookie akun yang masih aktif.'
+          : 'Tidak bisa memuat profil akun. Periksa koneksi proxy.',
+      );
+    } finally {
+      setSessionLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     getProxyBase().then(setProxyUrl);
-    getCookie().then((c) => setHasCookie(!!c));
-  }, []);
+    // Cookie lama yang sudah tersimpan divalidasi sekali saat masuk Settings.
+    getCookie().then((c) => {
+      setHasCookie(!!c);
+      if (c) void fetchSession();
+    });
+  }, [fetchSession]);
 
   const runTest = useCallback(async (base: string) => {
     setTest({ kind: 'testing' });
@@ -77,13 +115,59 @@ export function SettingsScreen({ palette }: { palette: Palette }) {
     setCookieField('');
     setHasCookie(true);
     flash('Cookie tersimpan');
-  }, [cookie, flash]);
+    // Langsung validasi: kalau cookie invalid user tahu di tempat yang sama.
+    void fetchSession();
+  }, [cookie, flash, fetchSession]);
 
   const removeCookie = useCallback(async () => {
     await clearCookie();
+    // Pilihan channel ikut dibersihkan: tanpa cookie, pageId channel tidak
+    // berarti apa-apa untuk server (sesi sudah hilang).
+    await clearUserChannel();
+    // Jar WebView native ikut dibersihkan per cookie Google — kalau tidak,
+    // layar login berikutnya langsung ter-redirect dengan sesi lama (bug
+    // "login yang tidak bisa dipakai login" ala BitChord).
+    await clearGoogleWebCookies().catch(() => undefined);
     setHasCookie(false);
+    setSession(null);
+    setSessionError(null);
     flash('Cookie dihapus');
   }, [flash]);
+
+  /** Pilih channel (x-yt-user). id null = akun utama = hapus pageId tersimpan.
+   *  Setelah pilih, sesi di-fetch ulang supaya state `selected` selalu
+   *  mencerminkan keputusan server, bukan asumsi client. */
+  const pickChannel = useCallback(
+    async (id: string | null, name: string) => {
+      try {
+        if (id === null) await clearUserChannel();
+        else await setUserChannel(id);
+        flash(id === null ? 'Akun utama dipakai' : `Channel: ${name}`);
+        void fetchSession();
+      } catch {
+        flash('Gagal menyimpan channel');
+      }
+    },
+    [flash, fetchSession],
+  );
+
+  /** Daftar channel untuk picker. Hanya muncul bila ada lebih dari satu
+   *  pilihan. Kalau server tidak mengirim entri akun utama (id null), tambahkan
+   *  satu opsi sintetis "Akun utama" supaya user selalu bisa kembali ke default
+   *  (tanpa header x-yt-user). */
+  const channelOptions = useMemo(() => {
+    if (!session) return [];
+    const list = [...session.channels];
+    if (list.length > 1 && !list.some((c) => c.id === null)) {
+      list.unshift({
+        id: null,
+        name: 'Akun utama',
+        thumbnail: null,
+        selected: !list.some((c) => c.selected),
+      });
+    }
+    return list;
+  }, [session]);
 
   return (
     <ScrollView
@@ -168,6 +252,19 @@ export function SettingsScreen({ palette }: { palette: Palette }) {
           </View>
         ) : (
           <>
+            {/* Jalur utama: login via WebView — cookie diangkat otomatis dari
+                sesi Google yang benar-benar valid (API_SID wajib ada). */}
+            <Pressable
+              onPress={() => navigation.navigate('Login')}
+              accessibilityRole="button"
+              accessibilityLabel="Masuk dengan Google"
+              style={({ pressed }) => [styles.btnPrimary, pressed && { opacity: 0.7 }, { backgroundColor: palette.accent }]}
+            >
+              <Text style={[styles.btnPrimaryText, { color: palette.onAccent }]}>Masuk dengan Google</Text>
+            </Pressable>
+            <Text style={[styles.groupHint, { color: palette.textSecondary }]}>
+              Atau tempel cookie manual dari browser:
+            </Text>
             <TextInput
               value={cookie}
               onChangeText={setCookieField}
@@ -197,6 +294,76 @@ export function SettingsScreen({ palette }: { palette: Palette }) {
             </View>
           </>
         )}
+        {hasCookie && sessionLoading ? (
+          <ActivityIndicator color={palette.accent} style={styles.testResult} />
+        ) : null}
+        {hasCookie && session ? (
+          <>
+            <View style={[styles.profileRow, { backgroundColor: palette.surfaceVariant }]}>
+              {session.profile.thumbnail ? (
+                <Image
+                  source={{ uri: session.profile.thumbnail }}
+                  style={styles.avatar}
+                  accessibilityLabel={undefined}
+                />
+              ) : (
+                <View style={[styles.avatar, styles.avatarFallback, { backgroundColor: palette.surface }]}>
+                  <Icon name="account-circle" size={24} color={palette.textSecondary} />
+                </View>
+              )}
+              <View style={styles.profileMeta}>
+                <Text numberOfLines={1} style={[styles.profileName, { color: palette.text }]}>
+                  {session.profile.name}
+                </Text>
+                {session.profile.email ? (
+                  <Text numberOfLines={1} style={[styles.profileEmail, { color: palette.textSecondary }]}>
+                    {session.profile.email}
+                  </Text>
+                ) : null}
+              </View>
+            </View>
+            {channelOptions.length > 1 ? (
+              <View>
+                <Text style={[styles.channelTitle, { color: palette.text }]}>Channel</Text>
+                {channelOptions.map((channel) => (
+                  <Pressable
+                    key={channel.id ?? '__main__'}
+                    onPress={() => void pickChannel(channel.id, channel.name)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Pakai channel ${channel.name}`}
+                    accessibilityState={{ selected: channel.selected }}
+                    style={({ pressed }) => [
+                      styles.channelRow,
+                      { backgroundColor: palette.surfaceVariant },
+                      channel.selected && { backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.accent },
+                      pressed && { opacity: 0.7 },
+                    ]}
+                  >
+                    {channel.thumbnail ? (
+                      <Image source={{ uri: channel.thumbnail }} style={styles.channelAvatar} accessibilityLabel={undefined} />
+                    ) : (
+                      <View style={[styles.channelAvatar, styles.avatarFallback, { backgroundColor: palette.surface }]}>
+                        <Icon name="music-note" size={18} color={palette.textSecondary} />
+                      </View>
+                    )}
+                    <Text numberOfLines={1} style={[styles.channelName, { color: palette.text }]}>
+                      {channel.name}
+                    </Text>
+                    {channel.selected ? (
+                      <Icon name="check-circle" size={18} color={palette.accent} />
+                    ) : null}
+                  </Pressable>
+                ))}
+              </View>
+            ) : null}
+          </>
+        ) : null}
+        {hasCookie && !sessionLoading && sessionError ? (
+          <View style={[styles.testRow, { backgroundColor: palette.surfaceVariant }]}>
+            <Icon name="error-outline" size={18} color={palette.error} />
+            <Text style={[styles.testText, { color: palette.error }]}>{sessionError}</Text>
+          </View>
+        ) : null}
       </View>
 
       {savedFlash && (
@@ -249,6 +416,31 @@ const styles = StyleSheet.create({
   },
   testText: { fontSize: typeScale.label, flex: 1 },
   testResult: { paddingVertical: spacing.sm },
+  profileRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    padding: spacing.md,
+    borderRadius: radius.md,
+  },
+  avatar: { width: 44, height: 44, borderRadius: 22 },
+  avatarFallback: { alignItems: 'center', justifyContent: 'center' },
+  profileMeta: { flex: 1, gap: 2 },
+  profileName: { fontSize: typeScale.body, fontWeight: '700' },
+  profileEmail: { fontSize: typeScale.label },
+  channelTitle: { fontSize: typeScale.label, fontWeight: '700', marginTop: spacing.sm },
+  channelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    minHeight: 52,
+    borderRadius: radius.md,
+    marginTop: spacing.sm,
+  },
+  channelAvatar: { width: 36, height: 36, borderRadius: 18 },
+  channelName: { flex: 1, fontSize: typeScale.body, fontWeight: '600' },
   flash: {
     flexDirection: 'row',
     alignItems: 'center',

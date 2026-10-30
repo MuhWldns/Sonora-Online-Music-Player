@@ -1,6 +1,7 @@
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 import { BrowseScreen } from '../screens/BrowseScreen';
+import { LoginScreen } from '../screens/LoginScreen';
 import type { Palette } from '../theme';
 import { RootTabs } from './RootTabs';
 import type { RootStackParamList } from './types';
@@ -15,6 +16,9 @@ export function RootNavigator({ palette }: { palette: Palette }) {
       </Stack.Screen>
       <Stack.Screen name="Browse">
         {(props) => <BrowseScreen {...props} palette={palette} />}
+      </Stack.Screen>
+      <Stack.Screen name="Login">
+        {(props) => <LoginScreen {...props} palette={palette} />}
       </Stack.Screen>
     </Stack.Navigator>
   );
