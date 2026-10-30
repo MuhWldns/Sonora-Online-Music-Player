@@ -9,6 +9,16 @@
 export interface CacheAdapter {
   get<T>(key: string): Promise<T | null>;
   set<T>(key: string, value: T, ttlMs: number): Promise<void>;
+  /**
+   * Hapus entry (untuk invalidation tertarget setelah mutasi, mis. lagu
+   * history yang dihapus jangan ikut terlayani dari cache basi).
+   *
+   * Kenapa opsional: adapter yang tidak punya operasi hapus murah (mis. KV
+   * di worker.ts) boleh tidak mengimplementasikannya. Pemanggil WAJIB memakai
+   * optional-chaining `deps.cache.delete?.(key)` dan memperlakukan hasilnya
+   * sebagai best-effort — cache basi tetap bisa terjadi, bukan error.
+   */
+  delete?(key: string): Promise<void>;
 }
 
 interface Entry {
@@ -31,5 +41,9 @@ export class MemoryCache implements CacheAdapter {
 
   async set<T>(key: string, value: T, ttlMs: number): Promise<void> {
     this.store.set(key, { value, expires: Date.now() + ttlMs });
+  }
+
+  async delete(key: string): Promise<void> {
+    this.store.delete(key);
   }
 }
