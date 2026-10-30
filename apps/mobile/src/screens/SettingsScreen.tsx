@@ -26,7 +26,6 @@ import {
   getCookie,
   getProxyBase,
   healthz,
-  setCookie,
   setProxyBase,
   setUserChannel,
 } from '../api/client';
@@ -45,7 +44,6 @@ type TestState =
 export function SettingsScreen({ palette }: { palette: Palette }) {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const [proxyUrl, setProxyUrl] = useState('');
-  const [cookie, setCookieField] = useState('');
   const [hasCookie, setHasCookie] = useState(false);
   const [test, setTest] = useState<TestState>({ kind: 'idle' });
   const [savedFlash, setSavedFlash] = useState<string | null>(null);
@@ -67,7 +65,7 @@ export function SettingsScreen({ palette }: { palette: Palette }) {
       setSession(null);
       setSessionError(
         msg.startsWith('proxy 401')
-          ? 'Cookie tidak valid. Hapus lalu tempel cookie akun yang masih aktif.'
+          ? 'Cookie tidak valid. Hapus lalu login ulang dengan Google.'
           : 'Tidak bisa memuat profil akun. Periksa koneksi proxy.',
       );
     } finally {
@@ -124,17 +122,6 @@ export function SettingsScreen({ palette }: { palette: Palette }) {
     await setProxyBase(proxyUrl);
     flash('Proxy tersimpan');
   }, [proxyUrl, flash]);
-
-  const saveCookie = useCallback(async () => {
-    const trimmed = cookie.trim();
-    if (!trimmed) return;
-    await setCookie(trimmed);
-    setCookieField('');
-    setHasCookie(true);
-    flash('Cookie tersimpan');
-    // Langsung validasi: kalau cookie invalid user tahu di tempat yang sama.
-    void fetchSession();
-  }, [cookie, flash, fetchSession]);
 
   const removeCookie = useCallback(async () => {
     await clearCookie();
@@ -253,8 +240,8 @@ export function SettingsScreen({ palette }: { palette: Palette }) {
         <Text style={[styles.groupTitle, { color: palette.text }]}>Akun YouTube Music</Text>
         <Text style={[styles.groupHint, { color: palette.textSecondary }]}>
           {hasCookie
-            ? 'Cookie tersimpan di perangkat ini. Server tidak pernah menyimpannya.'
-            : 'Login dengan cookie dari browser tempat kamu sudah login ke music.youtube.com. Tanpa cookie: search & home tetap jalan; library butuh login.'}
+            ? 'Sesi tersimpan di perangkat ini. Server tidak pernah menyimpannya.'
+            : 'Login dengan akun Google untuk mengisi library, history, dan rekomendasi. Tanpa login: search & home tetap jalan.'}
         </Text>
         {hasCookie ? (
           <View style={styles.actions}>
@@ -269,8 +256,8 @@ export function SettingsScreen({ palette }: { palette: Palette }) {
           </View>
         ) : (
           <>
-            {/* Jalur utama: login via WebView — cookie diangkat otomatis dari
-                sesi Google yang benar-benar valid (API_SID wajib ada). */}
+            {/* Satu-satunya jalur login: WebView Google — cookie diangkat
+                otomatis dari sesi yang benar-benar valid (API_SID wajib ada). */}
             <Pressable
               onPress={() => navigation.navigate('Login')}
               accessibilityRole="button"
@@ -279,36 +266,6 @@ export function SettingsScreen({ palette }: { palette: Palette }) {
             >
               <Text style={[styles.btnPrimaryText, { color: palette.onAccent }]}>Masuk dengan Google</Text>
             </Pressable>
-            <Text style={[styles.groupHint, { color: palette.textSecondary }]}>
-              Atau tempel cookie manual dari browser:
-            </Text>
-            <TextInput
-              value={cookie}
-              onChangeText={setCookieField}
-              placeholder="Tempel cookie di sini…"
-              placeholderTextColor={palette.textSecondary}
-              autoCapitalize="none"
-              autoCorrect={false}
-              multiline
-              style={[styles.input, styles.cookieInput, { color: palette.text, borderColor: palette.outline, backgroundColor: palette.surface }]}
-              accessibilityLabel="Cookie YouTube"
-            />
-            <View style={styles.actions}>
-              <Pressable
-                onPress={saveCookie}
-                disabled={!cookie.trim()}
-                accessibilityRole="button"
-                accessibilityLabel="Simpan cookie"
-                style={({ pressed }) => [
-                  styles.btnPrimary,
-                  pressed && { opacity: 0.7 },
-                  !cookie.trim() && { opacity: 0.4 },
-                  { backgroundColor: palette.accent },
-                ]}
-              >
-                <Text style={[styles.btnPrimaryText, { color: palette.onAccent }]}>Simpan cookie</Text>
-              </Pressable>
-            </View>
           </>
         )}
         {hasCookie && sessionLoading ? (
@@ -410,7 +367,6 @@ const styles = StyleSheet.create({
     fontSize: typeScale.body,
     minHeight: 48,
   },
-  cookieInput: { minHeight: 96, textAlignVertical: 'top' },
   actions: { flexDirection: 'row', gap: spacing.sm },
   btnPrimary: {
     paddingHorizontal: spacing.xl,
