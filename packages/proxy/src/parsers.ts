@@ -126,6 +126,10 @@ export interface ParsedItem {
   browseId?: string;
   browseType?: string;
   watchPlaylist?: boolean;
+  /** ID baris playlist (dari renderers playlist/album) — dipakai operasi per-item di UI. */
+  setVideoId?: string;
+  /** Token feedback dari menu item — dipakai endpoint hapus-lagu-dari-history. */
+  feedbackToken?: string;
 }
 
 interface TwoRowRenderer {
@@ -161,7 +165,9 @@ export function parseTwoRow(r: TwoRowRenderer): ParsedItem | null {
 
 interface ListItemRenderer {
   flexColumns?: { musicResponsiveListItemFlexColumnRenderer?: { text?: Runs } }[];
-  playlistItemData?: { videoId: string };
+  playlistItemData?: { videoId: string; setVideoId?: string };
+  setVideoId?: string;
+  menu?: unknown;
   overlay?: unknown;
   navigationEndpoint?: NavigationEndpoint;
   thumbnail?: unknown;
@@ -201,6 +207,21 @@ export function parseListItem(r: ListItemRenderer): ParsedItem | null {
       else artists.push(e);
     }
   }
+
+  // Renderers playlist/album memasang setVideoId di level renderer, namun
+  // beberapa bentuk lama menaruhnya di playlistItemData — cek keduanya dan
+  // pakai yang non-kosong agar identitas baris playlist tetap valid.
+  const setVideoId =
+    stringField(r, 'setVideoId') ?? stringField(r.playlistItemData ?? {}, 'setVideoId');
+  // Token feedback hidup di menu item (dipakai hapus-lagu-dari-history). Bentuk
+  // menu bervariasi antar halaman, jadi deep-walk r.menu dan ambil
+  // feedbackEndpoint pertama yang membawa token non-kosong.
+  const feedbackEndpoint = findFirst<{ token?: unknown }>(r.menu, 'feedbackEndpoint');
+  const feedbackToken =
+    typeof feedbackEndpoint?.token === 'string' && feedbackEndpoint.token.length > 0
+      ? feedbackEndpoint.token
+      : undefined;
+
   const type = videoId ? 'song' : (navInfo.browseType ?? 'song');
   const item: ParsedItem = {
     type,
@@ -211,6 +232,9 @@ export function parseListItem(r: ListItemRenderer): ParsedItem | null {
     artists,
     album: albums[0] ?? null,
     ...navInfo,
+    // Sertakan hanya bila ada: konsumen membedakan "tidak ada ID" vs string kosong.
+    ...(setVideoId ? { setVideoId } : {}),
+    ...(feedbackToken ? { feedbackToken } : {}),
   };
   const fixed = findFirst<{ text?: Runs }>(r, 'musicResponsiveListItemFixedColumnRenderer');
   if (fixed?.text) item.duration = normalizeDuration(text(fixed.text));
@@ -266,6 +290,197 @@ export function parseBrowseSections(data: unknown): ParsedSection[] {
   const sections = lists.flatMap((list) => parseSections(list.contents ?? []));
   return sections.filter((section, index) => sections.findIndex((s) => s.title === section.title) === index);
 }
+
+/* ---------------- continuation generik ---------------- */
+
+/**
+ * Pencabut continuation token generik untuk respons /browse (bukan /next).
+ * Upstream menaruh token "muat lagi" di beberapa bentuk renderer, jadi urutan
+ * cek di bawah adalah prioritas dari bentuk yang paling sering muncul. /next
+ * memakai fungsi ini juga (lewat nextContinuation) agar urutan parsing token
+ * hanya punya satu sumber kebenaran — kalau layout upstream berubah, kedua
+ * endpoint berubah bersamaan.
+ */
+export function extractContinuation(data: unknown): string | undefined {
+  // continuationItemRenderer digantung di akhir daftar konten; tokennya bisa
+  // berada di continuationEndpoint (bentuk shelf) atau endpoint (bentuk next).
+  for (const item of findAll<Record<string, unknown>>(data, 'continuationItemRenderer')) {
+    for (const endpointKey of ['continuationEndpoint', 'endpoint']) {
+      const endpoint = item[endpointKey];
+      if (!endpoint || typeof endpoint !== 'object' || Array.isArray(endpoint)) continue;
+      const command = (endpoint as Record<string, unknown>).continuationCommand;
+      const token = stringField(command, 'token');
+      if (token) return token;
+    }
+  }
+
+  for (const continuation of findAll<Record<string, unknown>>(data, 'musicShelfContinuation')) {
+    const token = stringField(continuation, 'token');
+    if (token) return token;
+  }
+
+  for (const nextData of findAll<Record<string, unknown>>(data, 'nextContinuationData')) {
+    const token = stringField(nextData, 'continuation') ?? stringField(nextData, 'token');
+    if (token) return token;
+  }
+
+  for (const command of findAll<Record<string, unknown>>(data, 'continuationCommand')) {
+    const token = stringField(command, 'token');
+    if (token) return token;
+  }
+
+  return undefined;
+}
+
+/* ---------------- header album/playlist & halaman artis ---------------- */
+
+export interface EntityHeader {
+  title: string;
+  subtitle?: string;
+  thumbnail: string | null;
+  /**
+   * Backing playlist dari tombol Play header (bentuk OLAK5uy_/MPRE/VL).
+   * Sengaja tidak dinormalisasi di sini — konsumen yang memutuskan bentuknya.
+   */
+  playlistId?: string;
+}
+
+/** Teks title/subtitle header; musicResponsiveHeaderRenderer membungkus runs lebih dalam. */
+const headerText = (container: unknown): string => {
+  if (!container) return '';
+  const direct = text(container as Runs);
+  if (direct) return direct;
+  // Bentuk responsive: runs tersembunyi di musicResponsiveHeaderRendererTitleText
+  // (atau ...SubtitleText) — deep-walk 'runs' menangani keduanya sekaligus.
+  const nested = findFirst<{ text: string }[]>(container, 'runs');
+  return nested ? nested.map((r) => r.text).join('') : '';
+};
+
+/**
+ * Parse header halaman album/playlist/single. Bentuk renderer header bervariasi
+ * antar halaman, jadi coba ketiganya dan pakai yang pertama ketemu.
+ */
+export function parseEntityHeader(data: unknown): EntityHeader | undefined {
+  const header =
+    findFirst<Record<string, unknown>>(data, 'musicDetailHeaderRenderer') ??
+    findFirst<Record<string, unknown>>(data, 'musicResponsiveHeaderRenderer') ??
+    findFirst<Record<string, unknown>>(data, 'musicImmersiveHeaderRenderer');
+  if (!header) return undefined;
+
+  const title = headerText(header.title);
+  // Header tanpa title tidak berguna bagi konsumen — anggap tidak ada header.
+  if (!title) return undefined;
+
+  const subtitle = headerText(header.subtitle);
+
+  // Tombol Play header membawa playlist backing (deep-walk karena letak tombol
+  // bervariasi: buttons[], menu, dsb); watchEndpoint dan watchPlaylistEndpoint
+  // dua-duanya pernah dipakai upstream, jadi cek berurutan.
+  const play = findFirst<{ playNavigationEndpoint?: NavigationEndpoint }>(
+    header,
+    'musicPlayButtonRenderer',
+  );
+  const nav = play?.playNavigationEndpoint;
+  const playlistId = nav?.watchEndpoint?.playlistId ?? nav?.watchPlaylistEndpoint?.playlistId;
+
+  return {
+    title,
+    ...(subtitle ? { subtitle } : {}),
+    thumbnail: thumbs(header.thumbnail),
+    ...(playlistId ? { playlistId } : {}),
+  };
+}
+
+export interface ShelfMore {
+  browseId?: string;
+  params?: string;
+  playlistId?: string;
+}
+
+export interface ArtistSection extends ParsedSection {
+  more?: ShelfMore;
+}
+
+export interface ArtistShelves {
+  sections: ArtistSection[];
+  songsPlaylistId?: string;
+  songsContinuation?: string;
+}
+
+/** Ambil target tombol "More" dari shelf; bentuk endpoint bervariasi per jenis shelf. */
+function shelfMore(renderer: unknown): ShelfMore | undefined {
+  const button = findFirst<{ buttonRenderer?: { navigationEndpoint?: NavigationEndpoint } }>(
+    renderer,
+    'moreContentButton',
+  );
+  const nav = button?.buttonRenderer?.navigationEndpoint;
+  if (!nav) return undefined;
+  if (nav.browseEndpoint?.browseId) {
+    return {
+      browseId: nav.browseEndpoint.browseId,
+      ...(nav.browseEndpoint.params ? { params: nav.browseEndpoint.params } : {}),
+    };
+  }
+  if (nav.watchPlaylistEndpoint?.playlistId) return { playlistId: nav.watchPlaylistEndpoint.playlistId };
+  if (nav.watchEndpoint?.playlistId) return { playlistId: nav.watchEndpoint.playlistId };
+  return undefined;
+}
+
+/**
+ * Parse shelf halaman artis + link "More"-nya. Respons artist page bervariasi,
+ * jadi: sections tetap dari parseBrowseSections (satu sumber kebenaran), lalu
+ * shelf di-walk sekali dalam urutan dokumen dan dipasangkan by-index. Shelf
+ * kosong dan judul duplikat dilewati dengan aturan yang sama seperti
+ * parseBrowseSections (keep-first) supaya pasangan section↔shelf tidak bergeser.
+ */
+export function parseArtistPageShelves(data: unknown): ArtistShelves {
+  const sections = parseBrowseSections(data) as ArtistSection[];
+  let next = 0;
+  const seenTitles = new Set<string>();
+  let songsPlaylistId: string | undefined;
+
+  for (const list of findAll<{ contents?: SectionContainer[] }>(data, 'sectionListRenderer')) {
+    for (const s of list.contents ?? []) {
+      const car = s.musicCarouselShelfRenderer;
+      const shelf = s.musicShelfRenderer;
+      const playlist = s.musicPlaylistShelfRenderer;
+      // Prioritas sama seperti parseSections: carousel > shelf > playlist.
+      const renderer = car ?? shelf ?? playlist;
+      if (!renderer) continue;
+
+      // parseContents dipakai ulang supaya aturan "shelf menghasilkan section"
+      // identik dengan parseBrowseSections; shelf kosong dilewati agar index
+      // pairing tetap selaras.
+      const items = parseContents(renderer.contents);
+      if (!items.length) continue;
+
+      // musicShelfRenderer pertama yang berisi lagu (videoId) = shelf Songs;
+      // tombol More-nya menuju playlist songs milik artis.
+      if (shelf && songsPlaylistId === undefined && items.some((it) => it.type === 'song' && it.videoId)) {
+        songsPlaylistId = shelfMore(shelf)?.playlistId;
+      }
+
+      const title = shelf
+        ? text(shelf.title)
+        : text(findFirst<Runs>((car ?? playlist)?.header, 'title'));
+      if (seenTitles.has(title)) continue;
+      seenTitles.add(title);
+
+      const section = sections[next] as ArtistSection | undefined;
+      if (section) {
+        const more = shelfMore(renderer);
+        if (more) section.more = more;
+      }
+      next += 1;
+    }
+  }
+
+  if (songsPlaylistId !== undefined) return { sections, songsPlaylistId };
+  // Tanpa playlist link, sisa lagu diambil lewat token continuation respons.
+  const continuation = extractContinuation(data);
+  return continuation ? { sections, songsContinuation: continuation } : { sections };
+}
+
 export interface NextQueueItem {
   videoId: string;
   title: string;
@@ -287,37 +502,13 @@ function stringField(value: unknown, field: string): string | undefined {
 }
 
 /**
- * InnerTube uses several renderer/container names for the same automix
- * continuation. Keep the token extraction beside queue parsing so /next and
- * /next/continue cannot drift as response layouts change.
+ * /next memakai bentuk continuation yang sama dengan respons browse; delegasi
+ * ke extractContinuation agar urutan prioritas token tidak bisa berbeda antara
+ * /next dan /browse saat layout upstream berubah. Pemanggilan tetap di samping
+ * parsing queue supaya ketergantungan /next → token tetap eksplisit.
  */
 function nextContinuation(data: unknown): string | undefined {
-  for (const continuation of findAll<Record<string, unknown>>(data, 'musicShelfContinuation')) {
-    const token = stringField(continuation, 'token');
-    if (token) return token;
-  }
-
-  for (const item of findAll<Record<string, unknown>>(data, 'continuationItemRenderer')) {
-    for (const endpointKey of ['endpoint', 'continuationEndpoint']) {
-      const endpoint = item[endpointKey];
-      if (!endpoint || typeof endpoint !== 'object' || Array.isArray(endpoint)) continue;
-      const command = (endpoint as Record<string, unknown>).continuationCommand;
-      const token = stringField(command, 'token');
-      if (token) return token;
-    }
-  }
-
-  for (const command of findAll<Record<string, unknown>>(data, 'continuationCommand')) {
-    const token = stringField(command, 'token');
-    if (token) return token;
-  }
-
-  for (const nextData of findAll<Record<string, unknown>>(data, 'nextContinuationData')) {
-    const token = stringField(nextData, 'continuation') ?? stringField(nextData, 'token');
-    if (token) return token;
-  }
-
-  return undefined;
+  return extractContinuation(data);
 }
 
 function parsePanelItem(p: Record<string, unknown>): NextQueueItem {
