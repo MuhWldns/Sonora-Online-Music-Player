@@ -24,12 +24,50 @@ export interface InnertubeDeps {
   Innertube: InnertubeCtor;
 }
 
-/** Cache instance per kunci (cookie hash atau 'anon'). Module-level: di VPS
- *  bertahan selama proses; di Workers ikut lifecycle isolate (cold start). */
+/**
+ * Konteks session ala YouTube yang dipilih user (dikirim mobile):
+ * - cookie         → Cookie InnerTube.
+ * - onBehalfOfUser → Page ID channel/brand (on_behalf_of_user). Wajib saat
+ *   akun punya beberapa channel: tanpa ini InnerTube selalu memakai channel
+ *   default, jadi feed terasa "akun yang salah".
+ * - visitorData    → visitor data web (visitor_data). Membuat konten
+ *   konsisten dengan sesi web walau tidak login.
+ * - accountIndex   → index akun bila cookie multi-akun (account_index).
+ *
+ * Kenapa object (bukan argumen terpisah): field konteks opsional bisa
+ * bertambah lagi tanpa mengubah signature fungsi, dan cache key mudah
+ * dibangun dari gabungan semua field.
+ */
+export interface SessionOpts {
+  cookie?: string;
+  onBehalfOfUser?: string;
+  visitorData?: string;
+  accountIndex?: number;
+}
+
+/** Cache instance per kunci. Module-level: di VPS bertahan selama proses;
+ *  di Workers ikut lifecycle isolate (cold start). */
 const instances = new Map<string, Promise<InnertubeType>>();
 
+/** Key instance playback — hanya cookie + ip (XFF), konteks data tidak relevan
+ *  untuk /player & /stream. */
 const instanceKey = (cookie: string | undefined): string =>
   cookie ? `cookie:${hashStr(cookie)}` : 'anon';
+
+/**
+ * Key cache instance data-feed. HARUS mencakup SEMUA field SessionOpts:
+ * dua konteks berbeda (mis. onBehalfOfUser channel A vs B) yang menumpuk di
+ * satu instance akan saling menimpa respons feed-nya. Field kosong tetap
+ * dipisahkan ('u-', 'v-', 'a-') supaya key tak ambigu — mis. hash kosong
+ * tidak bisa tertukar dengan hash cookie.
+ */
+const sessionKey = (opts: SessionOpts): string =>
+  [
+    opts.cookie ? `c${hashStr(opts.cookie)}` : 'anon',
+    opts.onBehalfOfUser ? `u${hashStr(opts.onBehalfOfUser)}` : 'u-',
+    opts.visitorData ? `v${hashStr(opts.visitorData)}` : 'v-',
+    opts.accountIndex !== undefined ? `a${opts.accountIndex}` : 'a-',
+  ].join(':');
 
 function hashStr(s: string): string {
   let h = 0;
@@ -39,20 +77,60 @@ function hashStr(s: string): string {
   return h.toString(36);
 }
 
-/** Instance data-feed (search/home/next/library). Di-cache. Tanpa XFF. */
+/**
+ * Instance data-feed (search/home/next/library). Di-cache. Tanpa XFF.
+ *
+ * Dua bentuk argumen demi kompatibilitas:
+ * - (deps, cookie?)              → perilaku lama, pemanggil lama tetap compile.
+ * - (deps, SessionOpts)          → konteks penuh (onBehalfOfUser, dst).
+ */
 export function getDataInnertube(
   deps: InnertubeDeps,
   cookie?: string,
+): Promise<InnertubeType>;
+export function getDataInnertube(
+  deps: InnertubeDeps,
+  opts: SessionOpts,
+): Promise<InnertubeType>;
+export function getDataInnertube(
+  deps: InnertubeDeps,
+  cookieOrOpts?: string | SessionOpts,
 ): Promise<InnertubeType> {
-  const key = instanceKey(cookie);
+  const opts: SessionOpts =
+    typeof cookieOrOpts === 'object' && cookieOrOpts !== null
+      ? cookieOrOpts
+      : { cookie: cookieOrOpts };
+  const key = sessionKey(opts);
   let inst = instances.get(key);
   if (!inst) {
-    inst = deps.Innertube.create({ cookie: cookie || undefined });
+    inst = deps.Innertube.create({
+      cookie: opts.cookie || undefined,
+      on_behalf_of_user: opts.onBehalfOfUser || undefined,
+      visitor_data: opts.visitorData || undefined,
+      account_index: opts.accountIndex,
+    });
     instances.set(key, inst);
     // Gagal create (mis. network) → jangan cache promise gagal
     inst.catch(() => instances.delete(key));
   }
   return inst;
+}
+
+/**
+ * Hapus instance data-feed dari cache (key dibangun dari opts yang sama
+ * dengan getDataInnertube). Dipakai untuk retry setelah 401/403: tanpa
+ * invalidation, request berikutnya memakai kembali instance bermasalah.
+ * Idempotent — key yang tidak ada di cache diabaikan.
+ *
+ * deps ikut di signature demi simetri API dengan getDataInnertube
+ * (pemanggil sudah punya objek deps di tangan); tidak dipakai saat ini.
+ */
+export function invalidateDataInnertube(
+  deps: InnertubeDeps,
+  opts: SessionOpts,
+): void {
+  void deps;
+  instances.delete(sessionKey(opts));
 }
 
 /** Instance playback untuk /player & /stream: fetch meng-inject XFF client.
