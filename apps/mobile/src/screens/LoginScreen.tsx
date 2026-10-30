@@ -1,15 +1,12 @@
 /**
- * Login YouTube Music via WebView in-app.
+ * Login YouTube Music via WebView in-app — pola BitChord.
  *
- * Alur: bersihkan cookie Google di jar WebView → buka halaman login Google
- * yang berakhir di music.youtube.com → baca ytcfg halaman live → angkat cookie
- * dari jar native (API_SID wajib ada) → simpan ke keychain → validasi via
- * /auth/session.
- *
- * Capture dilakukan reaktif saat halaman music.youtube.com terdeteksi, TAPI
- * juga tersedia tombol manual "Simpan sesi sekarang" — auto-capture penuh
- * pernah jadi sumber race di BitChord (profil palsu yang menutup layar too
- * soon), jadi pengguna tetap punya kendali.
+ * WebView penuh layar, tanpa tombol simpan manual: begitu halaman mendarat
+ * di music.youtube.com dalam keadaan login (ytcfg LOGGED_IN), cookie diangkat
+ * dari jar WebView (API_SID wajib ada), divalidasi via /auth/session, lalu
+ * layar menutup sendiri. Capture terlalu dini adalah sumber race di BitChord
+ * (profil palsu + tutup too soon), jadi probe ytcfg diulang beberapa kali
+ * dan cookie yang sama tidak pernah disimpan dua kali.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
@@ -25,13 +22,17 @@ import {
   YTCFG_PROBE,
   clearGoogleWebCookies,
   readYoutubeCookieHeader,
-  type CapturedIdentity,
 } from '../auth/sessionCapture';
 import { radius, spacing, typeScale } from '../theme';
 import type { Palette } from '../theme';
 import type { RootStackParamList } from '../navigation/types';
 
-type Phase = 'preparing' | 'browsing' | 'saving' | 'done' | 'error';
+/** Probe ytcfg diulang selama ini sebelum menyerah — cookie & ytcfg bisa
+ *  "menempel" beberapa ratus ms setelah halaman land. */
+const PROBE_MAX_ATTEMPTS = 5;
+const PROBE_RETRY_MS = 1500;
+
+type Phase = 'preparing' | 'browsing' | 'saving' | 'done';
 
 /** Domain yang boleh dimuat — login Google menyentuh subdomain ini saja;
  *  sisanya ditolak supaya redirect tak terduga tidak membawa sesi keluar. */
@@ -60,13 +61,27 @@ function hostIsMusic(url: string): boolean {
   }
 }
 
+interface ProbePayload {
+  type?: string;
+  loggedIn?: string;
+  pageId?: string | null;
+  dataSyncId?: string | null;
+  authUser?: string | null;
+  visitorData?: string | null;
+}
+
 export function LoginScreen({ palette }: { palette: Palette }) {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const webViewRef = useRef<WebView>(null);
   const [phase, setPhase] = useState<Phase>('preparing');
   const [notice, setNotice] = useState<string | null>(null);
-  const [profileName, setProfileName] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
+  const probeAttempts = useRef(0);
+  /** Cookie terakhir yang sudah dicoba disimpan — cegah loop simpan ulang
+   *  cookie yang sama saat probe diulang. */
+  const lastAttemptedCookie = useRef<string | null>(null);
+  /** Probe sedang dijadwalkan ulang — jangan tumpuk jadwal dari tiap load. */
+  const probeScheduled = useRef(false);
   const insets = useSafeAreaInsets();
 
   /** Bersihkan jar Google dulu supaya akun lain bisa login (jar lama membuat
@@ -81,81 +96,89 @@ export function LoginScreen({ palette }: { palette: Palette }) {
     };
   }, []);
 
-  const saveAndValidate = useCallback(async () => {
-    setPhase('saving');
-    setNotice(null);
-    const header = await readYoutubeCookieHeader();
-    if (!header) {
-      // Belum ada API_SID — sesi belum "menempel". Biarkan user lanjut di
-      // WebView; menyimpan sekarang hanya membuat sesi yang gagal nanti.
-      setPhase('browsing');
-      setNotice('Login belum lengkap — buka music.youtube.com sampai halamannya tampil, lalu simpan.');
-      return;
-    }
-    try {
-      await setCookie(header);
-    } catch {
-      setPhase('error');
-      setNotice('Gagal menyimpan cookie ke perangkat.');
-      return;
-    }
-    // pageId (DELEGATED_SESSION_ID) = channel aktif saat capture — disimpan
-    // terpisah dari cookie (lewat handleProbe) supaya bisa diganti tanpa login
-    // ulang. visitorData sengaja tidak disimpan: proxy resolve sendiri.
-    try {
-      const session = await authSession();
-      setProfileName(session.profile.name);
-      setPhase('done');
-      setTimeout(() => navigation.goBack(), 1200);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg.startsWith('proxy 401')) {
-        // Proxy menolak cookie yang baru di-capture → sesinya memang tidak
-        // sah; jangan biarkan tersimpan memberi ilusi sudah login.
-        await clearCookie().catch(() => undefined);
-        await clearUserChannel().catch(() => undefined);
+  const scheduleProbe = useCallback((delayMs = 0) => {
+    if (probeScheduled.current) return;
+    probeScheduled.current = true;
+    setTimeout(() => {
+      probeScheduled.current = false;
+      webViewRef.current?.injectJavaScript(YTCFG_PROBE);
+    }, delayMs);
+  }, []);
+
+  const saveAndValidate = useCallback(
+    async (header: string) => {
+      setPhase('saving');
+      setNotice(null);
+      try {
+        await setCookie(header);
+      } catch {
+        setNotice('Gagal menyimpan cookie ke perangkat.');
         setPhase('browsing');
-        setNotice('Cookie ditolak server — sesi tidak valid. Coba login ulang.');
-      } else {
-        setPhase('done');
-        setNotice('Sesi tersimpan, tapi tidak bisa divalidasi (proxy tidak terjangkau).');
-        setTimeout(() => navigation.goBack(), 2500);
+        return;
       }
-    }
-  }, [navigation]);
+      try {
+        const session = await authSession();
+        setPhase('done');
+        // Tutup sendiri ala BitChord — Settings yang menunggu di bawah akan
+        // menyegarkan sesi saat focus kembali.
+        setTimeout(() => navigation.goBack(), 800);
+        void session;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.startsWith('proxy 401')) {
+          // Proxy menolak cookie yang baru di-capture → sesinya memang tidak
+          // sah; jangan biarkan tersimpan memberi ilusi sudah login.
+          await clearCookie().catch(() => undefined);
+          await clearUserChannel().catch(() => undefined);
+          setNotice('Cookie ditolak server — sesi tidak valid. Coba login ulang.');
+          setPhase('browsing');
+        } else {
+          // Tidak bisa divalidasi (proxy tak terjangkau) — cookie tetap sah
+          // untuk dicoba lagi nanti; tutup, Settings akan menampilkan state.
+          setPhase('done');
+          setNotice('Sesi tersimpan, tapi tidak bisa divalidasi (proxy tidak terjangkau).');
+          setTimeout(() => navigation.goBack(), 2000);
+        }
+      }
+    },
+    [navigation],
+  );
 
   const handleProbe = useCallback(
-    (identity: CapturedIdentity) => {
-      if (identity.loggedIn !== true) return;
-      // pageId disimpan di sini (bukan di saveAndValidate) karena identitas
-      // dibaca halaman live — cookie header dari jar tidak membawanya.
-      if (identity.pageId) void setUserChannel(identity.pageId).catch(() => undefined);
-      void saveAndValidate();
+    (payload: ProbePayload) => {
+      if (payload.loggedIn !== 'true') return; // belum login — biarkan user di form
+      // pageId (DELEGATED_SESSION_ID) = channel aktif saat capture — disimpan
+      // terpisah dari cookie supaya bisa diganti tanpa login ulang.
+      // visitorData sengaja tidak disimpan: proxy resolve sendiri.
+      if (payload.pageId) void setUserChannel(payload.pageId).catch(() => undefined);
+
+      void (async () => {
+        const header = await readYoutubeCookieHeader();
+        if (!header) {
+          // API_SID belum menempel di jar — coba probe lagi dalam beberapa
+          // ratus ms sebelum menyerah (race "too soon" ala BitChord).
+          if (probeAttempts.current < PROBE_MAX_ATTEMPTS) {
+            probeAttempts.current += 1;
+            scheduleProbe(PROBE_RETRY_MS);
+          } else {
+            setNotice('Login belum lengkap — buka music.youtube.com sampai halamannya tampil.');
+          }
+          return;
+        }
+        if (header === lastAttemptedCookie.current) return; // sudah dicoba — jangan loop
+        lastAttemptedCookie.current = header;
+        await saveAndValidate(header);
+      })();
     },
-    [saveAndValidate],
+    [saveAndValidate, scheduleProbe],
   );
 
   const onMessage = useCallback(
     (event: WebViewMessageEvent) => {
       try {
-        // Probe mengirim nilai mentah sebagai string — konversi ke tipe kaya
-        // terjadi di sini, sebelum menyentuh CapturedIdentity.
-        const data = JSON.parse(event.nativeEvent.data) as {
-          type?: string;
-          loggedIn?: string;
-          pageId?: string | null;
-          dataSyncId?: string | null;
-          authUser?: string | null;
-          visitorData?: string | null;
-        };
+        const data = JSON.parse(event.nativeEvent.data) as ProbePayload;
         if (data.type !== 'ytcfg') return; // pesan lain dari halaman — abaikan
-        handleProbe({
-          loggedIn: data.loggedIn === 'true',
-          pageId: data.pageId ?? null,
-          dataSyncId: data.dataSyncId ?? null,
-          authUser: data.authUser ?? null,
-          visitorData: data.visitorData ?? null,
-        });
+        handleProbe(data);
       } catch {
         // bukan JSON dari probe kami — abaikan
       }
@@ -163,55 +186,54 @@ export function LoginScreen({ palette }: { palette: Palette }) {
     [handleProbe],
   );
 
-  const onNavStateChange = useCallback((state: WebViewNavigation) => {
-    if (hostIsMusic(state.url)) webViewRef.current?.injectJavaScript(YTCFG_PROBE);
-  }, []);
-
-  const busy = phase === 'preparing' || phase === 'saving';
+  const onNavStateChange = useCallback(
+    (state: WebViewNavigation) => {
+      if (hostIsMusic(state.url)) {
+        probeAttempts.current = 0; // landing baru — reset kuota retry
+        scheduleProbe();
+      }
+    },
+    [scheduleProbe],
+  );
 
   return (
     <View style={[styles.root, { backgroundColor: palette.background, paddingTop: insets.top }]}>
-      {/* Bar atas */}
+      {/* Bar atas ramping: judul + tutup + garis progres tipis */}
       <View style={[styles.header, { borderBottomColor: palette.outline }]}>
-        <Text style={[styles.headerTitle, { color: palette.text }]}>Masuk dengan Google</Text>
+        <Text style={[styles.headerTitle, { color: palette.text }]} numberOfLines={1}>
+          {notice ?? 'Masuk dengan Google'}
+        </Text>
         <Pressable
           onPress={() => navigation.goBack()}
           accessibilityRole="button"
           accessibilityLabel="Tutup layar login"
           style={({ pressed }) => [styles.close, pressed && { opacity: 0.6 }]}
         >
-          <Icon name="close" size={22} color={palette.text} />
+          <Icon name={phase === 'done' ? 'check-circle' : 'close'} size={22} color={palette.text} />
         </Pressable>
       </View>
-
-      {notice ? (
-        <View style={[styles.notice, { backgroundColor: palette.surfaceVariant }]}>
-          <Icon
-            name={phase === 'done' ? 'check-circle' : 'error-outline'}
-            size={18}
-            color={phase === 'done' ? '#2E7D32' : palette.error}
-          />
-          <Text style={[styles.noticeText, { color: palette.text }]}>{notice}</Text>
+      {phase === 'saving' ? (
+        <View style={styles.savingBar}>
+          <ActivityIndicator size="small" color={palette.accent} />
+          <Text style={[styles.savingText, { color: palette.textSecondary }]}>Menyimpan sesi…</Text>
         </View>
-      ) : null}
+      ) : (
+        <View style={[styles.progressTrack, { backgroundColor: palette.surfaceVariant }]}>
+          <View
+            style={[
+              styles.progressFill,
+              { backgroundColor: palette.accent, width: `${Math.round(progress * 100)}%` },
+            ]}
+          />
+        </View>
+      )}
 
       {phase === 'preparing' ? (
         <View style={styles.center}>
           <ActivityIndicator color={palette.accent} />
           <Text style={[styles.hint, { color: palette.textSecondary }]}>Menyiapkan sesi baru…</Text>
         </View>
-      ) : null}
-
-      {phase === 'done' ? (
-        <View style={styles.center}>
-          <Icon name="check-circle" size={48} color="#2E7D32" />
-          <Text style={[styles.doneTitle, { color: palette.text }]}>
-            {profileName ? `Masuk sebagai ${profileName}` : 'Sesi tersimpan'}
-          </Text>
-        </View>
-      ) : null}
-
-      {(phase === 'browsing' || phase === 'saving' || phase === 'error') && (
+      ) : (
         <View style={styles.web}>
           <WebView
             ref={webViewRef}
@@ -225,47 +247,8 @@ export function LoginScreen({ palette }: { palette: Palette }) {
             incognito={false}
             style={{ backgroundColor: palette.background }}
           />
-          {phase === 'saving' ? (
-            <View style={[styles.overlay, { backgroundColor: `${palette.background}CC` }]}>
-              <ActivityIndicator color={palette.accent} />
-              <Text style={[styles.hint, { color: palette.textSecondary }]}>Menyimpan sesi…</Text>
-            </View>
-          ) : null}
         </View>
       )}
-
-      {/* Bilah bawah: progress + aksi manual */}
-      <View style={[styles.footer, { paddingBottom: insets.bottom + spacing.sm }]}>
-        <View style={[styles.progressTrack, { backgroundColor: palette.surfaceVariant }]}>
-          <View style={[styles.progressFill, { backgroundColor: palette.accent, width: `${Math.round(progress * 100)}%` }]} />
-        </View>
-        <View style={styles.footerActions}>
-          <Pressable
-            onPress={() => void saveAndValidate()}
-            disabled={busy || phase === 'done'}
-            accessibilityRole="button"
-            accessibilityLabel="Simpan sesi sekarang"
-            style={({ pressed }) => [
-              styles.saveBtn,
-              { backgroundColor: palette.accent },
-              (busy || phase === 'done') && { opacity: 0.4 },
-              pressed && { opacity: 0.7 },
-            ]}
-          >
-            <Text style={[styles.saveBtnText, { color: palette.onAccent }]}>Simpan sesi sekarang</Text>
-          </Pressable>
-          {phase === 'error' ? (
-            <Pressable
-              onPress={() => navigation.goBack()}
-              accessibilityRole="button"
-              accessibilityLabel="Kembali"
-              style={({ pressed }) => [styles.backBtn, pressed && { opacity: 0.7 }, { backgroundColor: palette.surfaceVariant }]}
-            >
-              <Text style={[styles.backBtnText, { color: palette.text }]}>Kembali</Text>
-            </Pressable>
-          ) : null}
-        </View>
-      </View>
     </View>
   );
 }
@@ -276,55 +259,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.sm,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  headerTitle: { flex: 1, fontSize: typeScale.title, fontWeight: '700' },
+  headerTitle: { flex: 1, fontSize: typeScale.body, fontWeight: '700' },
   close: { padding: spacing.sm },
-  notice: {
+  progressTrack: { height: 2 },
+  progressFill: { height: 2 },
+  savingBar: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.sm,
-    marginHorizontal: spacing.lg,
-    marginTop: spacing.sm,
-    padding: spacing.md,
-    borderRadius: radius.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.xs,
   },
-  noticeText: { flex: 1, fontSize: typeScale.label, lineHeight: 18 },
+  savingText: { fontSize: typeScale.small },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.md },
-  doneTitle: { fontSize: typeScale.title, fontWeight: '700' },
   hint: { fontSize: typeScale.label },
   web: { flex: 1 },
-  overlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.sm,
-  },
-  footer: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.sm,
-    gap: spacing.sm,
-  },
-  progressTrack: { height: 3, borderRadius: 2, overflow: 'hidden' },
-  progressFill: { height: 3 },
-  footerActions: { flexDirection: 'row', gap: spacing.sm },
-  saveBtn: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: spacing.md,
-    borderRadius: 24,
-  },
-  saveBtnText: { fontSize: typeScale.body, fontWeight: '700' },
-  backBtn: {
-    alignItems: 'center',
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.md,
-    borderRadius: 24,
-  },
-  backBtnText: { fontSize: typeScale.body, fontWeight: '600' },
 });

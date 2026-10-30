@@ -13,7 +13,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -83,6 +83,23 @@ export function SettingsScreen({ palette }: { palette: Palette }) {
       if (c) void fetchSession();
     });
   }, [fetchSession]);
+
+  /** Sesi disegarkan tiap layar fokus: setelah LoginScreen menutup sendiri
+   *  (auto-capture ala BitChord), profil & channel tampil tanpa perlu buka
+   *  ulang Settings. */
+  useFocusEffect(
+    useCallback(() => {
+      let alive = true;
+      getCookie().then((c) => {
+        if (!alive) return;
+        setHasCookie(!!c);
+        if (c) void fetchSession();
+      });
+      return () => {
+        alive = false;
+      };
+    }, [fetchSession]),
+  );
 
   const runTest = useCallback(async (base: string) => {
     setTest({ kind: 'testing' });
