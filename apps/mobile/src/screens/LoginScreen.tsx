@@ -16,7 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView, type WebViewMessageEvent, type WebViewNavigation } from 'react-native-webview';
 
 import { Icon } from '../components/Icon';
-import { authSession, clearCookie, clearUserChannel, setCookie, setUserChannel } from '../api/client';
+import { authSessionWith, upsertAccount } from '../api/client';
 import {
   LOGIN_URL,
   YTCFG_PROBE,
@@ -80,6 +80,9 @@ export function LoginScreen({ palette }: { palette: Palette }) {
   /** Cookie terakhir yang sudah dicoba disimpan — cegah loop simpan ulang
    *  cookie yang sama saat probe diulang. */
   const lastAttemptedCookie = useRef<string | null>(null);
+  /** pageId channel dari probe ytcfg — dipakai saat upsert akun (pageId
+   *  tersimpan PER AKUN di registry, bukan global). */
+  const pageIdRef = useRef<string | null>(null);
   /** Probe sedang dijadwalkan ulang — jangan tumpuk jadwal dari tiap load. */
   const probeScheduled = useRef(false);
   const insets = useSafeAreaInsets();
@@ -110,34 +113,28 @@ export function LoginScreen({ palette }: { palette: Palette }) {
       setPhase('saving');
       setNotice(null);
       try {
-        await setCookie(header);
-      } catch {
-        setNotice('Gagal menyimpan cookie ke perangkat.');
-        setPhase('browsing');
-        return;
-      }
-      try {
-        const session = await authSession();
+        // Validasi dulu — cookie yang ditolak server tidak pernah masuk
+        // registry (authSessionWith mengirim cookie eksplisit).
+        const session = await authSessionWith(header, pageIdRef.current);
+        await upsertAccount({
+          id: session.profile.email ?? session.profile.name ?? `login:${Date.now()}`,
+          name: session.profile.name || 'Akun',
+          thumbnail: session.profile.thumbnail,
+          cookie: header,
+          pageId: pageIdRef.current,
+        });
         setPhase('done');
         // Tutup sendiri ala BitChord — Settings yang menunggu di bawah akan
         // menyegarkan sesi saat focus kembali.
         setTimeout(() => navigation.goBack(), 800);
-        void session;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         if (msg.startsWith('proxy 401')) {
-          // Proxy menolak cookie yang baru di-capture → sesinya memang tidak
-          // sah; jangan biarkan tersimpan memberi ilusi sudah login.
-          await clearCookie().catch(() => undefined);
-          await clearUserChannel().catch(() => undefined);
           setNotice('Cookie ditolak server — sesi tidak valid. Coba login ulang.');
           setPhase('browsing');
         } else {
-          // Tidak bisa divalidasi (proxy tak terjangkau) — cookie tetap sah
-          // untuk dicoba lagi nanti; tutup, Settings akan menampilkan state.
-          setPhase('done');
-          setNotice('Sesi tersimpan, tapi tidak bisa divalidasi (proxy tidak terjangkau).');
-          setTimeout(() => navigation.goBack(), 2000);
+          setNotice('Sesi tidak bisa divalidasi (proxy tidak terjangkau) — coba lagi nanti.');
+          setPhase('browsing');
         }
       }
     },
@@ -147,10 +144,10 @@ export function LoginScreen({ palette }: { palette: Palette }) {
   const handleProbe = useCallback(
     (payload: ProbePayload) => {
       if (payload.loggedIn !== 'true') return; // belum login — biarkan user di form
-      // pageId (DELEGATED_SESSION_ID) = channel aktif saat capture — disimpan
-      // terpisah dari cookie supaya bisa diganti tanpa login ulang.
+      // pageId (DELEGATED_SESSION_ID) = channel aktif saat capture — masuk ke
+      // registry bersama akun ini (pageId per akun, bukan global).
       // visitorData sengaja tidak disimpan: proxy resolve sendiri.
-      if (payload.pageId) void setUserChannel(payload.pageId).catch(() => undefined);
+      pageIdRef.current = payload.pageId ?? null;
 
       void (async () => {
         const header = await readYoutubeCookieHeader();

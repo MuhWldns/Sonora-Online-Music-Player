@@ -57,32 +57,143 @@ export async function setProxyBase(url: string): Promise<void> {
   await AsyncStorage.setItem(PROXY_BASE_KEY, proxyBase);
 }
 
+/* ---------- Multi-account registry (pola BitChord) ---------- */
+
+/**
+ * Registry akun: SATU entry keychain berisi JSON { activeId, accounts[] } —
+ * tiap akun punya snapshot cookie + pageId channel-nya sendiri (ala
+ * AccountSessions BitChord). getCookie()/getUserChannel() selalu melayani
+ * akun AKTIF, jadi seluruh request() otomatis memakai identitas yang benar
+ * tanpa perubahan di pemanggil.
+ *
+ * Migrasi sekali dari store cookie tunggal lama (COOKIE_SERVICE), lalu entry
+ * legacy dibuang — registry jadi satu-satunya sumber kebenaran.
+ */
+export interface StoredAccount {
+  /** Identitas stabil: email profil, fallback nama. */
+  id: string;
+  name: string;
+  thumbnail: string | null;
+  /** Snapshot cookie akun ini — dikirim sebagai x-yt-cookie saat aktif. */
+  cookie: string;
+  /** Channel terpilih milik akun ini (x-yt-user), null = channel utama. */
+  pageId: string | null;
+}
+
+interface AccountStore {
+  activeId: string | null;
+  accounts: StoredAccount[];
+}
+
+const ACCOUNTS_SERVICE = 'com.sonora-music.yt-accounts';
+const EMPTY_STORE: AccountStore = { activeId: null, accounts: [] };
+
+async function loadAccountStore(): Promise<AccountStore> {
+  const creds = await Keychain.getGenericPassword({ service: ACCOUNTS_SERVICE });
+  if (creds) {
+    try {
+      const parsed = JSON.parse(creds.password) as AccountStore;
+      if (Array.isArray(parsed.accounts)) return parsed;
+    } catch {
+      // JSON korup — jatuh ke jalur migrasi di bawah daripada crash.
+    }
+  }
+  const legacy = await Keychain.getGenericPassword({ service: COOKIE_SERVICE });
+  if (!legacy) return EMPTY_STORE;
+  const legacyPageId = await Keychain.getGenericPassword({ service: USER_SERVICE })
+    .then((c) => (typeof c === 'object' && c ? c.password : null))
+    .catch(() => null);
+  const store: AccountStore = {
+    activeId: 'legacy',
+    accounts: [{ id: 'legacy', name: 'Akun', thumbnail: null, cookie: legacy.password, pageId: legacyPageId }],
+  };
+  await saveAccountStore(store);
+  // Entry legacy dibuang setelah dimigrasi — registry kini sumber kebenaran.
+  await Keychain.resetGenericPassword({ service: COOKIE_SERVICE }).catch(() => undefined);
+  await Keychain.resetGenericPassword({ service: USER_SERVICE }).catch(() => undefined);
+  return store;
+}
+
+async function saveAccountStore(store: AccountStore): Promise<void> {
+  await Keychain.setGenericPassword('yt', JSON.stringify(store), { service: ACCOUNTS_SERVICE });
+}
+
+export async function getAccounts(): Promise<AccountStore> {
+  return loadAccountStore();
+}
+
+export async function getActiveAccount(): Promise<StoredAccount | null> {
+  const store = await loadAccountStore();
+  return store.accounts.find((a) => a.id === store.activeId) ?? store.accounts[0] ?? null;
+}
+
+/** Tambah/replace akun lalu jadikan aktif. Dedupe: id sama (snapshot cookie
+ *  sama) atau nama sama (login ulang akun yang sama) menimpa entri lama. */
+export async function upsertAccount(account: StoredAccount): Promise<void> {
+  const store = await loadAccountStore();
+  const byId = store.accounts.findIndex((a) => a.id === account.id);
+  const idx = byId >= 0 ? byId : store.accounts.findIndex((a) => a.name === account.name);
+  if (idx >= 0) store.accounts[idx] = { ...store.accounts[idx], ...account };
+  else store.accounts.push(account);
+  store.activeId = account.id;
+  await saveAccountStore(store);
+}
+
+export async function activateAccount(id: string): Promise<void> {
+  const store = await loadAccountStore();
+  if (!store.accounts.some((a) => a.id === id)) return;
+  store.activeId = id;
+  await saveAccountStore(store);
+}
+
+/** Hapus akun; kalau yang dihapus sedang aktif, aktif otomatis pindah ke
+ *  akun tersisa pertama. Return akun aktif baru (null = registry kosong). */
+export async function removeAccount(id: string): Promise<StoredAccount | null> {
+  const store = await loadAccountStore();
+  store.accounts = store.accounts.filter((a) => a.id !== id);
+  if (store.activeId === id) store.activeId = store.accounts[0]?.id ?? null;
+  await saveAccountStore(store);
+  return store.accounts.find((a) => a.id === store.activeId) ?? null;
+}
+
+/** Segarkan nama/foto akun aktif dari /auth/session — penting untuk akun
+ *  migrasi legacy yang masih bernama generik. */
+export async function updateActiveAccountProfile(profile: {
+  name: string;
+  thumbnail: string | null;
+}): Promise<void> {
+  const store = await loadAccountStore();
+  const acc = store.accounts.find((a) => a.id === store.activeId);
+  if (!acc) return;
+  acc.name = profile.name || acc.name;
+  acc.thumbnail = profile.thumbnail ?? acc.thumbnail;
+  await saveAccountStore(store);
+}
+
+/** Cookie akun AKTIF (header x-yt-cookie). */
 export async function getCookie(): Promise<string | null> {
-  const creds = await Keychain.getGenericPassword({ service: COOKIE_SERVICE });
-  return creds ? creds.password : null;
+  return (await getActiveAccount())?.cookie ?? null;
 }
 
-export async function setCookie(cookie: string): Promise<void> {
-  await Keychain.setGenericPassword('yt', cookie, { service: COOKIE_SERVICE });
-}
-
-export async function clearCookie(): Promise<void> {
-  await Keychain.resetGenericPassword({ service: COOKIE_SERVICE });
-}
-
-/** pageId channel terpilih (header x-yt-user). Service keychain terpisah dari
- *  cookie supaya mengganti channel tidak pernah menyentuh credential akun. */
+/** pageId channel terpilih milik AKUN AKTIF (header x-yt-user). */
 export async function getUserChannel(): Promise<string | null> {
-  const creds = await Keychain.getGenericPassword({ service: USER_SERVICE });
-  return creds ? creds.password : null;
+  return (await getActiveAccount())?.pageId ?? null;
 }
 
-export async function setUserChannel(pageId: string): Promise<void> {
-  await Keychain.setGenericPassword('yt', pageId, { service: USER_SERVICE });
+/** pageId channel terpilih milik AKUN AKTIF (header x-yt-user); null =
+ *  kembali ke channel utama akun itu. */
+export async function setUserChannel(pageId: string | null): Promise<void> {
+  const store = await loadAccountStore();
+  const acc = store.accounts.find((a) => a.id === store.activeId);
+  if (!acc) return;
+  acc.pageId = pageId;
+  await saveAccountStore(store);
 }
 
-export async function clearUserChannel(): Promise<void> {
-  await Keychain.resetGenericPassword({ service: USER_SERVICE });
+/** Hanya bersihkan entry legacy (dipakai logout sebagai hygiene). */
+export async function clearCookie(): Promise<void> {
+  await Keychain.resetGenericPassword({ service: COOKIE_SERVICE }).catch(() => undefined);
+  await Keychain.resetGenericPassword({ service: USER_SERVICE }).catch(() => undefined);
 }
 
 async function request<T>(
@@ -91,14 +202,17 @@ async function request<T>(
   signal: AbortSignal | undefined,
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   body?: unknown,
+  /** Override sesi eksplisit — dipakai validasi login baru yang BELUM
+   *  tersimpan di registry (authSessionWith). */
+  session?: { cookie?: string; pageId?: string | null },
 ): Promise<T> {
   const base = await getProxyBase();
-  const cookie = await getCookie();
+  const cookie = session?.cookie ?? (await getCookie());
   const url = new URL(`${base}${path}`);
   for (const [k, v] of Object.entries(params ?? {})) url.searchParams.set(k, v);
 
   const headers = new Headers(cookie ? { 'x-yt-cookie': cookie } : undefined);
-  const pageId = await getUserChannel();
+  const pageId = session ? session.pageId : await getUserChannel();
   // Header channel hanya dikirim bila user memilih channel non-utama; tanpa
   // itu server memakai channel utama (onBehalfOfUser tidak di-set).
   if (pageId) headers.set('x-yt-user', pageId);
@@ -146,6 +260,14 @@ export const browse = (id: string) => api<BrowseResponse>('/browse', { id });
 
 /** 200 = cookie valid; 401 = cookie invalid (throw 'proxy 401…'). */
 export const authSession = () => api<AuthSessionResponse>('/auth/session');
+
+/** Validasi cookie login baru SEBELUM masuk registry — sehingga cookie yang
+ *  ditolak server tidak pernah menyentuh penyimpanan. */
+export const authSessionWith = (cookie: string, pageId?: string | null) =>
+  request<AuthSessionResponse>('/auth/session', undefined, undefined, 'GET', undefined, {
+    cookie,
+    pageId,
+  });
 
 /* ---------- Library (bentuk baru) ---------- */
 

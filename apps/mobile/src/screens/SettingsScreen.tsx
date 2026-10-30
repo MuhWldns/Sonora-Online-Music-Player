@@ -20,14 +20,19 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Icon } from '../components/Icon';
 import {
   DEFAULT_PROXY_BASE,
+  activateAccount,
   authSession,
   clearCookie,
-  clearUserChannel,
+  getAccounts,
+  getActiveAccount,
   getCookie,
   getProxyBase,
   healthz,
+  removeAccount,
   setProxyBase,
   setUserChannel,
+  updateActiveAccountProfile,
+  type StoredAccount,
 } from '../api/client';
 import { clearGoogleWebCookies } from '../auth/sessionCapture';
 import type { RootStackParamList } from '../navigation/types';
@@ -50,6 +55,8 @@ export function SettingsScreen({ palette }: { palette: Palette }) {
   const [session, setSession] = useState<AuthSessionResponse | null>(null);
   const [sessionError, setSessionError] = useState<string | null>(null);
   const [sessionLoading, setSessionLoading] = useState(false);
+  const [accountList, setAccountList] = useState<StoredAccount[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
   const insets = useSafeAreaInsets();
 
   /** Validasi cookie + ambil profil/channel lewat /auth/session.
@@ -60,12 +67,21 @@ export function SettingsScreen({ palette }: { palette: Palette }) {
       const result = await authSession();
       setSession(result);
       setSessionError(null);
+      // Segarkan nama/foto akun aktif dari profil asli (penting untuk akun
+      // migrasi legacy yang masih bernama generik), lalu muat ulang daftar.
+      await updateActiveAccountProfile({
+        name: result.profile.name,
+        thumbnail: result.profile.thumbnail,
+      });
+      const store = await getAccounts();
+      setAccountList(store.accounts);
+      setActiveId(store.activeId);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setSession(null);
       setSessionError(
         msg.startsWith('proxy 401')
-          ? 'Cookie tidak valid. Hapus lalu login ulang dengan Google.'
+          ? 'Cookie tidak valid. Logout lalu login ulang dengan Google.'
           : 'Tidak bisa memuat profil akun. Periksa koneksi proxy.',
       );
     } finally {
@@ -88,11 +104,16 @@ export function SettingsScreen({ palette }: { palette: Palette }) {
   useFocusEffect(
     useCallback(() => {
       let alive = true;
-      getCookie().then((c) => {
+      void (async () => {
+        const store = await getAccounts();
         if (!alive) return;
-        setHasCookie(!!c);
-        if (c) void fetchSession();
-      });
+        setAccountList(store.accounts);
+        setActiveId(store.activeId);
+        const cookie = await getCookie();
+        if (!alive) return;
+        setHasCookie(!!cookie);
+        if (cookie) void fetchSession();
+      })();
       return () => {
         alive = false;
       };
@@ -123,19 +144,50 @@ export function SettingsScreen({ palette }: { palette: Palette }) {
     flash('Proxy tersimpan');
   }, [proxyUrl, flash]);
 
-  /** Logout: hapus sesi tersimpan + pilihan channel + jar WebView native.
-   *  Jar harus ikut dibersihkan per cookie Google — kalau tidak, layar login
-   *  berikutnya langsung ter-redirect dengan sesi lama (bug "login yang tidak
-   *  bisa dipakai login" ala BitChord). */
+  /** Logout AKUN AKTIF saja: snapshot cookie-nya dibuang dari registry;
+   *  kalau masih ada akun lain, sesi otomatis pindah ke akun pertama yang
+   *  tersisa (ala BitChord — logout tidak pernah mengosongkan semuanya).
+   *  Jar WebView native ikut dibersihkan per cookie Google — kalau tidak,
+   *  layar login berikutnya langsung ter-redirect dengan sesi lama (bug
+   *  "login yang tidak bisa dipakai login" ala BitChord). */
   const logout = useCallback(async () => {
-    await clearCookie();
-    await clearUserChannel();
+    const active = await getActiveAccount();
+    if (active) await removeAccount(active.id);
+    await clearCookie().catch(() => undefined); // hygiene entry legacy
     await clearGoogleWebCookies().catch(() => undefined);
-    setHasCookie(false);
+    const store = await getAccounts();
+    setAccountList(store.accounts);
+    setActiveId(store.activeId);
+    setHasCookie(store.accounts.length > 0);
     setSession(null);
     setSessionError(null);
-    flash('Logout berhasil');
-  }, [flash]);
+    const next = store.accounts.find((a) => a.id === store.activeId);
+    if (next) {
+      flash(`Beralih ke ${next.name}`);
+      void fetchSession();
+    } else {
+      flash('Logout berhasil');
+    }
+  }, [flash, fetchSession]);
+
+  /** Aktifkan akun lain — request berikutnya otomatis memakai cookie +
+   *  channel milik akun itu (registry yang menentukan, bukan UI). */
+  const switchAccount = useCallback(
+    async (id: string) => {
+      try {
+        await activateAccount(id);
+        const store = await getAccounts();
+        setAccountList(store.accounts);
+        setActiveId(store.activeId);
+        const next = store.accounts.find((a) => a.id === id);
+        flash(next ? `Beralih ke ${next.name}` : 'Akun dipakai');
+        void fetchSession();
+      } catch {
+        flash('Gagal mengganti akun');
+      }
+    },
+    [flash, fetchSession],
+  );
 
   /** Pilih channel (x-yt-user). id null = akun utama = hapus pageId tersimpan.
    *  Setelah pilih, sesi di-fetch ulang supaya state `selected` selalu
@@ -143,8 +195,8 @@ export function SettingsScreen({ palette }: { palette: Palette }) {
   const pickChannel = useCallback(
     async (id: string | null, name: string) => {
       try {
-        if (id === null) await clearUserChannel();
-        else await setUserChannel(id);
+        // pageId tersimpan DI DALAM akun aktif (registry multi-account).
+        await setUserChannel(id);
         flash(id === null ? 'Akun utama dipakai' : `Channel: ${name}`);
         void fetchSession();
       } catch {
@@ -329,6 +381,53 @@ export function SettingsScreen({ palette }: { palette: Palette }) {
                 ))}
               </View>
             ) : null}
+            {/* Daftar akun tersimpan — tap untuk berpindah (cookie & channel
+                ikut akun itu otomatis, karena registry yang menentukan). */}
+            {accountList.length > 1 ? (
+              <View>
+                <Text style={[styles.channelTitle, { color: palette.text }]}>Akun</Text>
+                {accountList.map((account) => {
+                  const isActive = account.id === activeId;
+                  return (
+                    <Pressable
+                      key={account.id}
+                      onPress={() => (isActive ? undefined : void switchAccount(account.id))}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Pakai akun ${account.name}`}
+                      accessibilityState={{ selected: isActive }}
+                      style={({ pressed }) => [
+                        styles.channelRow,
+                        { backgroundColor: palette.surfaceVariant },
+                        isActive && { backgroundColor: palette.surface, borderWidth: 1, borderColor: palette.accent },
+                        pressed && { opacity: 0.7 },
+                      ]}
+                    >
+                      {account.thumbnail ? (
+                        <Image source={{ uri: account.thumbnail }} style={styles.channelAvatar} accessibilityLabel={undefined} />
+                      ) : (
+                        <View style={[styles.channelAvatar, styles.avatarFallback, { backgroundColor: palette.surface }]}>
+                          <Icon name="account-circle" size={18} color={palette.textSecondary} />
+                        </View>
+                      )}
+                      <Text numberOfLines={1} style={[styles.channelName, { color: palette.text }]}>
+                        {account.name}
+                      </Text>
+                      {isActive ? <Icon name="check-circle" size={18} color={palette.accent} /> : null}
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ) : null}
+            {/* Tambah akun: buka LoginScreen — login sukses otomatis masuk
+                registry dan menjadi akun aktif. */}
+            <Pressable
+              onPress={() => navigation.navigate('Login')}
+              accessibilityRole="button"
+              accessibilityLabel="Tambah akun"
+              style={({ pressed }) => [styles.btnTonal, pressed && { opacity: 0.7 }, { backgroundColor: palette.surfaceVariant }]}
+            >
+              <Text style={[styles.btnTonalText, { color: palette.text }]}>Tambah akun</Text>
+            </Pressable>
           </>
         ) : null}
         {hasCookie && !sessionLoading && sessionError ? (
