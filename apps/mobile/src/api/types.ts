@@ -21,12 +21,19 @@ export interface ParsedItem {
   browseId?: string;
   browseType?: string;
   watchPlaylist?: boolean;
+  /** Hanya untuk item yang butuh mutasi akun (playlist add / history remove).
+   *  Server baru mengirimnya di /library/recents, /history dan /library/songs. */
+  setVideoId?: string;
+  feedbackToken?: string;
 }
 
 export interface ParsedSection {
   title: string;
   items: ParsedItem[];
   list?: boolean;
+  /** Hanya section di /artist: target navigasi "lihat semua" dari kartu shelf
+   *  (browseId/params atau langsung playlistId). Opsional — home tidak punya. */
+  more?: { browseId?: string; params?: string; playlistId?: string };
 }
 
 export interface SearchResponse {
@@ -39,6 +46,8 @@ export interface HomeResponse {
 
 export interface HistoryResponse {
   sections: ParsedSection[];
+  /** Token paging server-side (dedupe per videoId). Absen = halaman terakhir. */
+  continuation?: string;
 }
 
 export interface PlaylistLibraryState {
@@ -49,6 +58,98 @@ export interface PlaylistLibraryState {
 export interface BrowseResponse {
   sections: ParsedSection[];
   playlist?: PlaylistLibraryState;
+  /** Kontrak baru: hanya ada saat browse album. Keys lama tetap dikirim. */
+  album?: { title: string; subtitle?: string; thumbnail: string | null; playlistId?: string };
+  songs?: ParsedItem[];
+  continuation?: string;
+}
+
+/* ---------- Auth/session ---------- */
+
+export interface AuthProfile {
+  name: string;
+  email?: string;
+  thumbnail: string | null;
+}
+
+export interface AuthChannel {
+  /** null = akun utama (tanpa onBehalfOfUser). */
+  id: string | null;
+  name: string;
+  thumbnail: string | null;
+  selected: boolean;
+}
+
+/** 200 = cookie valid; 401 = cookie invalid (server-side). */
+export interface AuthSessionResponse {
+  profile: AuthProfile;
+  channels: AuthChannel[];
+  valid: true;
+}
+
+/* ---------- Library (bentuk baru) ---------- */
+
+/** Recents: lagu dedupe, max 20. Item bisa punya feedbackToken untuk mutasi. */
+export interface RecentsResponse {
+  items: ParsedItem[];
+}
+
+export type LibraryCollectionKey =
+  | 'liked'
+  | 'songs'
+  | 'albums'
+  | 'artists'
+  | 'subscriptions'
+  | 'playlists';
+
+/** Satu koleksi. Continuation opsional — mobile boleh mengabaikannya. */
+export interface LibraryCollection {
+  items: ParsedItem[];
+  continuation?: string;
+}
+
+/** Koleksi kosong tidak ada key-nya, makanya Partial. */
+export interface LibraryResponse {
+  collections: Partial<Record<LibraryCollectionKey, LibraryCollection>>;
+}
+
+/** Halaman item generik untuk endpoint paging server-side. */
+export interface PagedItems {
+  items: ParsedItem[];
+  continuation?: string;
+}
+
+/* ---------- Artist ---------- */
+
+export interface ArtistResponse {
+  artist?: { title: string; subtitle?: string; thumbnail: string | null };
+  songs: ParsedItem[];
+  sections: ParsedSection[];
+}
+
+/* ---------- Playlist mutasi ---------- */
+
+/** Suffix generik untuk semua endpoint yang cuma menjawab ok. */
+export interface OkResponse {
+  ok: true;
+}
+
+export interface PlaylistItemResult {
+  videoId?: string;
+  setVideoId?: string;
+}
+
+export interface AddPlaylistItemsResponse {
+  results: PlaylistItemResult[];
+}
+
+/** PATCH /playlists/:id — kirim salah satu atau keduanya (title dan/atau reorder). */
+export interface EditPlaylistInput {
+  title?: string;
+  /** Pasangan reorder: urutan videoId saat ini dan urutan target.
+   *  Diff dihitung server-side. */
+  current?: string[];
+  target?: string[];
 }
 
 export interface CreatePlaylistResponse {

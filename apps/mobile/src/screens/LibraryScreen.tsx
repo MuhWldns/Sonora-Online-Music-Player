@@ -20,7 +20,7 @@ import { CreatePlaylistDialog } from '../components/CreatePlaylistDialog';
 import { ShelfCard, SongRow } from '../components/TrackRow';
 import { library } from '../api/library';
 import { getCookie } from '../api/client';
-import type { ParsedItem, ParsedSection } from '../api/types';
+import type { LibraryCollectionKey, LibraryResponse, ParsedItem } from '../api/types';
 import { usePlayerState } from '../player/usePlayerState';
 import type { RootStackParamList } from '../navigation/types';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -29,7 +29,7 @@ import { spacing, typeScale } from '../theme';
 import type { Palette } from '../theme';
 
 export function LibraryScreen({ palette }: { palette: Palette }) {
-  const [sections, setSections] = useState<ParsedSection[] | null>(null);
+  const [collections, setCollections] = useState<LibraryResponse['collections'] | null>(null);
   const [needsLogin, setNeedsLogin] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -43,17 +43,17 @@ export function LibraryScreen({ palette }: { palette: Palette }) {
     try {
       if (!(await getCookie())) {
         setNeedsLogin(true);
-        setSections(null);
+        setCollections(null);
         return;
       }
-      const { sections: nextSections } = await library();
+      const { collections: nextCollections } = await library();
       setNeedsLogin(false);
-      setSections(nextSections);
+      setCollections(nextCollections);
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
       if (message === 'login') {
         setNeedsLogin(true);
-        setSections(null);
+        setCollections(null);
         return;
       }
       setError(message);
@@ -66,27 +66,59 @@ export function LibraryScreen({ palette }: { palette: Palette }) {
     }, [load]),
   );
 
-  const songs = useMemo(
-    () =>
-      (sections ?? []).flatMap((section) =>
-        section.items.filter((item) => item.type === 'song' || item.type === 'video'),
-      ),
-    [sections],
-  );
-  const playlists = useMemo(() => {
+  /** Baris lagu: gabung liked + songs (dedupe per videoId). Koleksi kosong
+   *  memang tidak ada key-nya, jadi ?? [] untuk keduanya. */
+  const songs = useMemo(() => {
     const seen = new Set<string>();
     const items: ParsedItem[] = [];
-    for (const section of sections ?? []) {
-      for (const item of section.items) {
-        if (item.type !== 'playlist') continue;
-        const id = item.browseId ?? item.playlistId;
-        if (!id || seen.has(id)) continue;
+    for (const key of ['liked', 'songs'] as const) {
+      for (const item of collections?.[key]?.items ?? []) {
+        if (item.type !== 'song' && item.type !== 'video') continue;
+        const id = item.videoId ?? item.title;
+        if (seen.has(id)) continue;
         seen.add(id);
         items.push(item);
       }
     }
     return items;
-  }, [sections]);
+  }, [collections]);
+
+  /** Shelf non-lagu dikelompokkan per tipe (playlist/album/artist/…). Urutan
+   *  iterasi = urutan render: liked dulu, lalu playlists/albums/artists/
+   *  subscriptions sesuai kontrak. Continuation token diabaikan untuk sekarang
+   *  (server-side paging) — tanpa tombol load-more yang bisa rusak. */
+  const shelves = useMemo(() => {
+    const order: LibraryCollectionKey[] = [
+      'liked',
+      'playlists',
+      'albums',
+      'artists',
+      'subscriptions',
+    ];
+    const byType = new Map<string, ParsedItem[]>();
+    const seen = new Set<string>();
+    for (const key of order) {
+      for (const item of collections?.[key]?.items ?? []) {
+        if (item.type === 'song' || item.type === 'video') continue;
+        const id = item.browseId ?? item.playlistId ?? item.title;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        const list = byType.get(item.type) ?? [];
+        list.push(item);
+        byType.set(item.type, list);
+      }
+    }
+    const titles: Record<string, string> = {
+      playlist: 'Playlist',
+      album: 'Album',
+      artist: 'Artis',
+    };
+    return [...byType.entries()].map(([type, items]) => ({
+      key: type,
+      title: titles[type] ?? type.charAt(0).toUpperCase() + type.slice(1),
+      items,
+    }));
+  }, [collections]);
 
   const onPlay = useCallback((item: ParsedItem) => {
     playSong(item).catch(() => {});
@@ -112,7 +144,7 @@ export function LibraryScreen({ palette }: { palette: Palette }) {
     );
   }
 
-  if (!sections && !error) {
+  if (!collections && !error) {
     return (
       <View style={[styles.center, { backgroundColor: palette.background }]}>
         <ActivityIndicator size="large" color={palette.accent} />
@@ -120,7 +152,7 @@ export function LibraryScreen({ palette }: { palette: Palette }) {
     );
   }
 
-  if (error && !sections) {
+  if (error && !collections) {
     return (
       <View style={[styles.center, { backgroundColor: palette.background }]}>
         <Icon name="cloud-off" size={40} color={palette.textSecondary} />
@@ -182,15 +214,15 @@ export function LibraryScreen({ palette }: { palette: Palette }) {
                 />
               </View>
             </View>
-            {playlists.length > 0 ? (
-              <View style={styles.playlistBlock}>
-                <SectionHeader title="Playlist" palette={palette} />
+            {shelves.map((shelf) => (
+              <View key={shelf.key} style={styles.playlistBlock}>
+                <SectionHeader title={shelf.title} palette={palette} />
                 <ScrollView
                   horizontal
                   showsHorizontalScrollIndicator={false}
                   contentContainerStyle={styles.playlistShelf}
                 >
-                  {playlists.map((item, index) => (
+                  {shelf.items.map((item, index) => (
                     <ShelfCard
                       key={`${item.browseId ?? item.playlistId ?? item.title}-${index}`}
                       item={item}
@@ -200,7 +232,7 @@ export function LibraryScreen({ palette }: { palette: Palette }) {
                   ))}
                 </ScrollView>
               </View>
-            ) : null}
+            ))}
             {songs.length > 0 ? (
               <SectionHeader title="Lagu" palette={palette} />
             ) : null}
